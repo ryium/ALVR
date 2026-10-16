@@ -1,4 +1,5 @@
 use crate::dashboard::ServerRequest;
+use crate::dashboard::i18n::{message, tr};
 use alvr_common::{ConnectionState, frameconnect::QUALITY_EYE_SIZE};
 use alvr_events::StatisticsSummary;
 use alvr_gui_common::theme;
@@ -11,7 +12,7 @@ use std::time::{Duration, Instant};
 #[derive(Default)]
 pub struct FrameConnectTab {
     pub statistics: Option<(StatisticsSummary, Instant)>,
-    export_message: Option<String>,
+    export_message: Option<Result<String, String>>,
     settings_page: SettingsPage,
 }
 
@@ -222,7 +223,7 @@ impl FrameConnectTab {
             ui.vertical_centered(|ui| {
                 ui.add_space(120.0);
                 ui.spinner();
-                caption(ui, "接続情報を読み込んでいます");
+                caption(ui, tr(ui, "Loading connection information"));
             });
             return requests;
         };
@@ -238,23 +239,23 @@ impl FrameConnectTab {
             });
         let (title, description) = if streaming {
             (
-                "Steam Frameに接続しました",
-                "ヘッドセットでPCVRをお楽しみください",
+                tr(ui, "Connected to Steam Frame"),
+                tr(ui, "Enjoy PCVR in your headset"),
             )
         } else if connecting {
             (
-                "Steam Frameに接続しています",
-                "ヘッドセットを装着して、しばらくお待ちください",
+                tr(ui, "Connecting to Steam Frame"),
+                tr(ui, "Put on your headset and wait a moment"),
             )
         } else if server_running {
             (
-                "接続を待っています",
-                "Steam FrameでFrameConnectを開いてください",
+                tr(ui, "Waiting for a connection"),
+                tr(ui, "Open FrameConnect on Steam Frame"),
             )
         } else {
             (
-                "Steam Frameを接続",
-                "SteamVRを起動して、PCVRをはじめましょう",
+                tr(ui, "Connect Steam Frame"),
+                tr(ui, "Start SteamVR to begin your PCVR session"),
             )
         };
 
@@ -262,13 +263,13 @@ impl FrameConnectTab {
             ui.vertical_centered(|ui| {
                 ui.add_space(4.0);
                 let (status, color) = if streaming {
-                    ("接続済み", theme::OK_GREEN)
+                    (tr(ui, "Connected"), theme::OK_GREEN)
                 } else if connecting {
-                    ("接続中", theme::ACCENT_LIGHT)
+                    (tr(ui, "Connecting"), theme::ACCENT_LIGHT)
                 } else if server_running {
-                    ("接続待機中", theme::ACCENT_LIGHT)
+                    (tr(ui, "Waiting for connection"), theme::ACCENT_LIGHT)
                 } else {
-                    ("未接続", theme::SUBTEXT)
+                    (tr(ui, "Not connected"), theme::SUBTEXT)
                 };
                 ui.label(
                     RichText::new(format!("●  {status}"))
@@ -281,12 +282,12 @@ impl FrameConnectTab {
                 ui.add_space(8.0);
                 if server_running {
                     if ui
-                        .add_sized([206.0, 38.0], egui::Button::new("SteamVRを終了"))
+                        .add_sized([206.0, 38.0], egui::Button::new(tr(ui, "Stop SteamVR")))
                         .clicked()
                     {
                         requests.push(ServerRequest::ShutdownSteamvr);
                     }
-                } else if primary_button(ui, "SteamVRを起動").clicked() {
+                } else if primary_button(ui, tr(ui, "Start SteamVR")).clicked() {
                     requests.push(ServerRequest::LaunchSteamvr);
                 }
                 ui.add_space(6.0);
@@ -295,7 +296,7 @@ impl FrameConnectTab {
 
         if let Some(reason) = &session.frameconnect.reason {
             ui.add_space(10.0);
-            ui.label(RichText::new(reason).color(theme::WARN_YELLOW));
+            ui.label(RichText::new(message(ui, reason)).color(theme::WARN_YELLOW));
         }
         if let Some((stats, _)) = self
             .statistics
@@ -306,17 +307,17 @@ impl FrameConnectTab {
             section(ui, |ui| {
                 ui.columns(3, |cols| {
                     cols[0].vertical_centered(|ui| {
-                        caption(ui, "フレームレート");
+                        caption(ui, tr(ui, "Frame rate"));
                         ui.label(RichText::new(format!("{} fps", stats.client_fps)).size(22.0));
                     });
                     cols[1].vertical_centered(|ui| {
-                        caption(ui, "合計遅延");
+                        caption(ui, tr(ui, "Total latency"));
                         ui.label(
                             RichText::new(format!("{:.1} ms", stats.total_latency_ms)).size(22.0),
                         );
                     });
                     cols[2].vertical_centered(|ui| {
-                        caption(ui, "ビットレート");
+                        caption(ui, tr(ui, "Bitrate"));
                         ui.label(
                             RichText::new(format!("{:.1} Mbps", stats.video_mbits_per_sec))
                                 .size(22.0),
@@ -328,7 +329,7 @@ impl FrameConnectTab {
 
         if !devices.is_empty() {
             ui.add_space(16.0);
-            section_title(ui, "見つかったデバイス");
+            section_title(ui, tr(ui, "Discovered devices"));
             for (hostname, device) in devices {
                 ui.push_id(hostname, |ui| {
                     section(ui, |ui| {
@@ -348,12 +349,12 @@ impl FrameConnectTab {
                                     device
                                         .current_ip
                                         .map(|ip| ip.to_string())
-                                        .unwrap_or_else(|| "オフライン".into()),
+                                        .unwrap_or_else(|| tr(ui, "Offline").into()),
                                 );
                             });
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if !device.trusted {
-                                    if ui.button("この端末を登録").clicked() {
+                                    if ui.button(tr(ui, "Trust this device")).clicked() {
                                         requests.push(ServerRequest::UpdateClientList {
                                             hostname: hostname.clone(),
                                             action: ClientConnectionsAction::Trust,
@@ -365,9 +366,9 @@ impl FrameConnectTab {
                                         if server_running
                                             && device.connection_state == ConnectionState::Streaming
                                         {
-                                            "接続済み"
+                                            tr(ui, "Connected")
                                         } else {
-                                            "登録済み・自動接続"
+                                            tr(ui, "Trusted · automatic connection")
                                         },
                                     );
                                 }
@@ -383,22 +384,22 @@ impl FrameConnectTab {
                     ui.set_min_height(76.0);
                     ui.horizontal(|ui| {
                         super::desktop_icon(ui, super::DesktopIcon::Network, theme::ACCENT_LIGHT);
-                        section_title(ui, "同じネットワークに接続");
+                        section_title(ui, tr(ui, "Connect to the same network"));
                     });
                     caption(
                         ui,
-                        "PCは有線LAN、Steam Frameは同じルーターのWi-Fiに接続します。",
+                        tr(ui, "Connect your PC by Ethernet and Steam Frame to the same router over Wi-Fi."),
                     );
                 });
                 section(&mut cols[1], |ui| {
                     ui.set_min_height(76.0);
                     ui.horizontal(|ui| {
                         super::desktop_icon(ui, super::DesktopIcon::Headset, theme::ACCENT_LIGHT);
-                        section_title(ui, "ヘッドセットで起動");
+                        section_title(ui, tr(ui, "Open the app in your headset"));
                     });
                     caption(
                         ui,
-                        "Steam FrameでFrameConnectを開き、表示された自分の端末を登録します。",
+                        tr(ui, "Open FrameConnect on Steam Frame, then trust your device when it appears."),
                     );
                 });
             });
@@ -415,9 +416,21 @@ impl FrameConnectTab {
     ) -> Vec<ServerRequest> {
         let mut requests = vec![];
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.settings_page, SettingsPage::Display, "画面");
-            ui.selectable_value(&mut self.settings_page, SettingsPage::Audio, "音声");
-            ui.selectable_value(&mut self.settings_page, SettingsPage::General, "一般");
+            ui.selectable_value(
+                &mut self.settings_page,
+                SettingsPage::Display,
+                tr(ui, "Display"),
+            );
+            ui.selectable_value(
+                &mut self.settings_page,
+                SettingsPage::Audio,
+                tr(ui, "Audio"),
+            );
+            ui.selectable_value(
+                &mut self.settings_page,
+                SettingsPage::General,
+                tr(ui, "General"),
+            );
         });
         ui.add_space(16.0);
         let Some(session) = session else {
@@ -430,7 +443,10 @@ impl FrameConnectTab {
                 if server_running {
                     caption(
                         ui,
-                        "画質を変更するには、デバイス画面でSteamVRを終了してください。",
+                        tr(
+                            ui,
+                            "Stop SteamVR on the Devices page before changing video quality.",
+                        ),
                     );
                     ui.add_space(8.0);
                 }
@@ -447,56 +463,57 @@ impl FrameConnectTab {
                 let mut resolution_selected = false;
                 ui.add_enabled_ui(!server_running, |ui| {
                     section(ui, |ui| {
-                        section_title(ui, "画質");
-                        caption(ui, "片眼あたりの解像度を選択します。");
+                        section_title(ui, tr(ui, "Video quality"));
+                        caption(ui, tr(ui, "Choose the resolution for each eye."));
                         ui.add_space(10.0);
+                        let presets = [(2176, tr(ui, "Standard")), (2560, tr(ui, "High")), (2880, tr(ui, "Ultra"))];
                         ui.columns(3, |cols| {
-                            for (column, (size, title)) in cols.iter_mut().zip([(2176, "標準"), (2560, "高精細"), (2880, "最高精細")]) {
+                            for (column, (size, title)) in cols.iter_mut().zip(presets) {
                                 let selected = matches!(settings.video.transcoding_view_resolution, alvr_session::FrameSize::Absolute { width, height: Some(height) } if width == size && height == size);
                                 let button = egui::Button::new(RichText::new(format!("{title}\n{size} × {size}")).size(13.0)).fill(if selected { theme::ACCENT_BG } else { theme::LIGHTER_BG }).stroke(Stroke::new(1.0, if selected { theme::ACCENT } else { theme::SEPARATOR_BG }));
                                 if column.add_sized([column.available_width(), 76.0], button).clicked() { eye = size; resolution_selected = true; }
                             }
                         });
                         if !matches!(settings.video.transcoding_view_resolution, alvr_session::FrameSize::Absolute { width: width @ (2176 | 2560 | 2880), height: Some(height) } if width == height) {
-                            caption(ui, "現在はカスタム解像度を使用しています。");
+                            caption(ui, tr(ui, "A custom resolution is currently in use."));
                         }
                     });
                     ui.add_space(14.0);
                     section(ui, |ui| {
-                        section_title(ui, "ビットレート");
+                        section_title(ui, tr(ui, "Bitrate"));
                         ui.scope(|ui| {
                             ui.visuals_mut().widgets.inactive.bg_fill = theme::SEPARATOR_BG;
                             ui.visuals_mut().selection.bg_fill = theme::ACCENT;
                             ui.add(egui::Slider::new(&mut mbps, 20..=200).clamping(egui::SliderClamping::Edits).trailing_fill(true).suffix(" Mbps"));
                         });
-                        caption(ui, "高い値ほど映像が鮮明になります。通信が不安定なときは値を下げてください。");
+                        caption(ui, tr(ui, "Higher values improve image clarity. Lower the bitrate if the connection is unstable."));
                         ui.add_space(14.0);
-                        section_title(ui, "リフレッシュレート");
+                        section_title(ui, tr(ui, "Refresh rate"));
                         ui.horizontal_wrapped(|ui| {
-                            if ui.selectable_label(auto, "自動").clicked() { auto = true; fps = 144.0; }
+                            if ui.selectable_label(auto, tr(ui, "Automatic")).clicked() { auto = true; fps = 144.0; }
                             for hz in [90.0, 120.0, 144.0] {
                                 if ui.selectable_label(!auto && (fps - hz).abs() < 0.5, format!("{hz:.0} Hz")).clicked() { auto = false; fps = hz; }
                             }
                         });
-                        caption(ui, "自動では端末の対応状況と配信負荷に合わせて表示周期を調整します。");
+                        caption(ui, tr(ui, "Automatic mode adjusts the refresh rate to the headset capabilities and streaming load."));
                         ui.add_space(14.0);
-                        section_title(ui, "映像形式");
+                        section_title(ui, tr(ui, "Video codec"));
                         ui.horizontal_wrapped(|ui| {
                             ui.selectable_value(&mut codec, CodecType::AV1, "AV1");
                             ui.selectable_value(&mut codec, CodecType::Hevc, "HEVC (H.265)");
-                            if codec == CodecType::H264 { caption(ui, "現在の設定: H.264"); }
+                            if codec == CodecType::H264 { caption(ui, tr(ui, "Current setting: H.264")); }
                         });
-                        caption(ui, "PCとヘッドセットの両方が対応する形式を選んでください。");
+                        caption(ui, tr(ui, "Choose a codec supported by both your PC and headset."));
                     });
                     if show_experimental {
                         ui.add_space(14.0);
                         section(ui, |ui| {
-                            section_title(ui, "試験機能");
-                            ui.checkbox(&mut ten_bit, "10bitカラーを使用する");
+                            section_title(ui, tr(ui, "Experimental features"));
+                            ui.checkbox(&mut ten_bit, tr(ui, "Use 10-bit color"));
                             let gaze_available = session.frameconnect.negotiated.as_ref().is_some_and(|n| n.capabilities.eye_gaze);
-                            ui.add_enabled_ui(gaze_available || gaze, |ui| { ui.checkbox(&mut gaze, "視線追従の中心窩エンコード"); });
-                            caption(ui, "端末の対応が必要です。非対応の場合は配信を開始できません。");
-                            if ui.button("表示周期を再評価").clicked() {
+                            ui.add_enabled_ui(gaze_available || gaze, |ui| { ui.checkbox(&mut gaze, tr(ui, "Eye-tracked foveated encoding")); });
+                            caption(ui, tr(ui, "Requires headset support. Streaming cannot start on an unsupported device."));
+                            if ui.button(tr(ui, "Re-evaluate refresh rate")).clicked() {
                                 requests.push(ServerRequest::SetSessionValues(vec![setting("frameconnect.rate_ceiling", json!(null)), setting("frameconnect.reason", json!(null))]));
                             }
                         });
@@ -521,10 +538,10 @@ impl FrameConnectTab {
             }
             SettingsPage::Audio => {
                 section(ui, |ui| {
-                    section_title(ui, "ゲーム音声");
+                    section_title(ui, tr(ui, "Game audio"));
                     let mut enabled = settings.audio.game_audio.as_option().is_some();
                     if ui
-                        .checkbox(&mut enabled, "PCの音声をヘッドセットに送る")
+                        .checkbox(&mut enabled, tr(ui, "Stream PC audio to the headset"))
                         .changed()
                     {
                         requests.push(ServerRequest::SetSessionValues(vec![setting(
@@ -532,7 +549,7 @@ impl FrameConnectTab {
                             json!(enabled),
                         )]));
                     }
-                    caption(ui, "PCのゲーム音声をヘッドセットで再生します。");
+                    caption(ui, tr(ui, "Play PC game audio through your headset."));
                 });
             }
             SettingsPage::General => {
@@ -545,7 +562,7 @@ impl FrameConnectTab {
                     if ui
                         .checkbox(
                             &mut automatic,
-                            "FrameConnectと一緒にSteamVRを起動・終了する",
+                            tr(ui, "Start and stop SteamVR with FrameConnect"),
                         )
                         .changed()
                     {
@@ -555,11 +572,11 @@ impl FrameConnectTab {
                 ui.add_space(14.0);
                 section(ui, |ui| {
                     section_title(ui, "FrameConnect");
-                    caption(ui, format!("バージョン {}", session.server_version));
                     caption(
                         ui,
-                        "ALVRを基盤とするSteam Frame向けPCVRストリーミングアプリです。",
+                        format!("{} {}", tr(ui, "Version"), session.server_version),
                     );
+                    caption(ui, tr(ui, "PCVR streaming for Steam Frame, built on ALVR."));
                 });
             }
         }
@@ -574,22 +591,31 @@ impl FrameConnectTab {
     ) -> Vec<ServerRequest> {
         let mut requests = vec![];
         section(ui, |ui| {
-            section_title(ui, "接続のはじめかた");
+            section_title(ui, tr(ui, "Getting connected"));
             for (step, title, detail) in [
                 (
                     "1",
-                    "PCとヘッドセットを同じネットワークに接続",
-                    "PCは有線LANでルーターへ、Steam FrameはWi-Fiで接続します。",
+                    tr(ui, "Connect your PC and headset to the same network"),
+                    tr(
+                        ui,
+                        "Connect your PC to the router by Ethernet and Steam Frame over Wi-Fi.",
+                    ),
                 ),
                 (
                     "2",
-                    "両方でFrameConnectを起動",
-                    "PCのデバイス画面でSteamVRを起動し、Steam FrameでもFrameConnectを開きます。",
+                    tr(ui, "Open FrameConnect on both devices"),
+                    tr(
+                        ui,
+                        "Start SteamVR on the PC's Devices page, and open FrameConnect on Steam Frame.",
+                    ),
                 ),
                 (
                     "3",
-                    "見つかった自分の端末を登録",
-                    "デバイス画面の「この端末を登録」を押します。登録後は自動接続します。",
+                    tr(ui, "Trust your discovered headset"),
+                    tr(
+                        ui,
+                        "Select Trust this device on the Devices page. Your headset will then connect automatically.",
+                    ),
                 ),
             ] {
                 ui.add_space(8.0);
@@ -604,21 +630,24 @@ impl FrameConnectTab {
         });
         ui.add_space(14.0);
         section(ui, |ui| {
-            section_title(ui, "初回セットアップ");
+            section_title(ui, tr(ui, "Initial setup"));
             caption(
                 ui,
-                "初めて使うPCでは、ドライバーの登録とファイアウォールの設定を行ってください。",
+                tr(
+                    ui,
+                    "On a new PC, register the driver and configure the firewall first.",
+                ),
             );
             ui.horizontal_wrapped(|ui| {
-                if ui.button("SteamVRドライバーを登録").clicked() {
+                if ui.button(tr(ui, "Register SteamVR driver")).clicked() {
                     requests.push(ServerRequest::RegisterAlvrDriver);
                 }
-                if ui.button("Windowsファイアウォールを設定").clicked() {
+                if ui.button(tr(ui, "Configure Windows Firewall")).clicked() {
                     requests.push(ServerRequest::AddFirewallRules);
                 }
             });
             if session.is_some_and(|s| s.to_settings().extra.open_setup_wizard)
-                && ui.button("セットアップを完了").clicked()
+                && ui.button(tr(ui, "Finish setup")).clicked()
             {
                 requests.push(ServerRequest::SetSessionValues(vec![setting(
                     "session_settings.extra.open_setup_wizard",
@@ -628,33 +657,39 @@ impl FrameConnectTab {
         });
         ui.add_space(14.0);
         section(ui, |ui| {
-            section_title(ui, "接続できないとき");
+            section_title(ui, tr(ui, "Troubleshooting connections"));
             caption(
                 ui,
-                "同じFrameConnectビルドをPCとヘッドセットで使用し、ネットワークとファイアウォールを確認してください。",
+                tr(
+                    ui,
+                    "Use the same FrameConnect build on your PC and headset, and check the network and firewall.",
+                ),
             );
-            if server_running && ui.button("SteamVRを再起動").clicked() {
+            if server_running && ui.button(tr(ui, "Restart SteamVR")).clicked() {
                 requests.push(ServerRequest::RestartSteamvr);
             }
             let Some(session) = session else {
                 return;
             };
             let live = streaming(session, server_running);
-            ui.collapsing("接続の詳細・診断", |ui| {
+            ui.collapsing(tr(ui, "Connection details and diagnostics"), |ui| {
                 if let Some(n) = &session.frameconnect.negotiated {
-                    ui.label(format!("{}: {} · {}bit · 片眼 {} × {} · {:.0} Hz", if live { "接続設定" } else { "前回の接続設定" }, n.codec, if n.ten_bit { 10 } else { 8 }, n.eye_width, n.eye_height, n.refresh_rate));
-                    caption(ui, format!("デコーダー: {}", n.decoder));
-                } else { caption(ui, "接続情報はまだありません。"); }
-                if let Some(reason) = &session.frameconnect.reason { ui.label(RichText::new(reason).color(theme::WARN_YELLOW)); }
-                if ui.button("診断JSONを保存").clicked() {
+                    ui.label(format!("{}: {} · {}bit · {} {} × {} · {:.0} Hz", if live { tr(ui, "Connection settings") } else { tr(ui, "Previous connection settings") }, n.codec, if n.ten_bit { 10 } else { 8 }, tr(ui, "Per eye"), n.eye_width, n.eye_height, n.refresh_rate));
+                    caption(ui, format!("{}: {}", tr(ui, "Decoder"), n.decoder));
+                } else { caption(ui, tr(ui, "No connection information yet.")); }
+                if let Some(reason) = &session.frameconnect.reason { ui.label(RichText::new(message(ui, reason)).color(theme::WARN_YELLOW)); }
+                if ui.button(tr(ui, "Save diagnostics JSON")).clicked() {
                     let path = crate::get_filesystem_layout().log_dir.join("frameconnect-diagnostics.json");
                     let report = json!({"schema_version": 1, "session": session, "streaming": live, "statistics": self.statistics.as_ref().filter(|(_, t)| live && t.elapsed() < Duration::from_secs(3)).map(|(s, _)| s)});
                     self.export_message = Some(match std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap()) {
-                        Ok(()) => format!("保存しました: {}", path.display()),
-                        Err(e) => format!("保存失敗: {e}"),
+                        Ok(()) => Ok(path.display().to_string()),
+                        Err(e) => Err(e.to_string()),
                     });
                 }
-                if let Some(message) = &self.export_message { ui.label(message); }
+                if let Some(message) = &self.export_message {
+                    let (label, detail) = match message { Ok(path) => ("Saved", path), Err(error) => ("Save failed", error) };
+                    ui.label(format!("{}: {detail}", tr(ui, label)));
+                }
             });
         });
         requests

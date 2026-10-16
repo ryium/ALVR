@@ -360,7 +360,7 @@ pub fn tracking_loop(
                 session.session_settings.video.foveated_encoding.enabled = false;
                 session.session_settings.headset.face_tracking.enabled = false;
                 session.frameconnect.reason = Some(
-                    "視線が取得できないため、視線追従を解除して全画面の画質で再接続します".into(),
+                    "Eye tracking is unavailable. Reconnecting without eye tracking at full-frame quality.".into(),
                 );
             }
             crate::notify_restart_driver();

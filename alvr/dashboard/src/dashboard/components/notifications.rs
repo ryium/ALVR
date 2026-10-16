@@ -1,3 +1,4 @@
+use crate::dashboard::i18n::{message, tr};
 use alvr_common::{LogEntry, LogSeverity};
 use alvr_gui_common::theme::{self, log_colors};
 use alvr_session::Settings;
@@ -145,17 +146,21 @@ impl NotificationBar {
         bottom_bar.show(ui, |ui| {
             ui.with_layout(Layout::right_to_left(alignment), |ui| {
                 if !self.expanded {
-                    if ui.small_button("詳細").clicked() {
+                    if ui.small_button(tr(ui, "Details")).clicked() {
                         self.expanded = true;
                     }
-                } else if ui.button("閉じる").clicked() {
+                } else if ui.button(tr(ui, "Close")).clicked() {
                     self.expanded = false;
                 }
                 ui.with_layout(Layout::left_to_right(alignment), |ui| {
                     //A LayoutJob that has its TextWrapping updated to fill the available space would probably be a more elegant solution.
                     ui.add(
-                        Label::new(RichText::new(&self.message).color(fg).size(12.0))
-                            .wrap_mode(wrapping),
+                        Label::new(
+                            RichText::new(message(ui, &self.message))
+                                .color(fg)
+                                .size(12.0),
+                        )
+                        .wrap_mode(wrapping),
                     );
                 })
             })

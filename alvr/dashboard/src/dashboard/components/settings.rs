@@ -3,6 +3,7 @@ use super::{
     presets::{PresetControl, builtin_schema},
 };
 use crate::dashboard::ServerRequest;
+use crate::dashboard::i18n::Language;
 use alvr_gui_common::{DisplayString, theme};
 use alvr_session::{SessionSettings, Settings};
 use eframe::egui::{Align, Frame, Grid, Layout, RichText, ScrollArea, Ui};
@@ -110,6 +111,7 @@ impl SettingsTab {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) -> Vec<ServerRequest> {
+        let language = Language::from_context(ui.ctx());
         let mut requests = vec![];
 
         let now = Instant::now();
@@ -131,13 +133,15 @@ impl SettingsTab {
                         ui.selectable_value(
                             &mut self.selected_top_tab_id,
                             "presets".into(),
-                            RichText::new("Presets").raised().size(15.0),
+                            RichText::new(language.text("Presets")).raised().size(15.0),
                         );
                         for entry in &mut self.top_level_entries {
                             ui.selectable_value(
                                 &mut self.selected_top_tab_id,
                                 entry.id.id.clone(),
-                                RichText::new(entry.id.display.clone()).raised().size(15.0),
+                                RichText::new(language.text(&entry.id.display))
+                                    .raised()
+                                    .size(15.0),
                             );
                         }
                     })

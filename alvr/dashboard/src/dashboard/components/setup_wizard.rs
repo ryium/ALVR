@@ -1,4 +1,5 @@
 use crate::dashboard::ServerRequest;
+use crate::dashboard::i18n::Language;
 use eframe::{
     egui::{Button, Label, Layout, RichText, Ui},
     emath::Align,
@@ -39,14 +40,15 @@ fn page_content(
     paragraph: &str,
     interactible_content: impl FnMut(&mut Ui),
 ) {
+    let language = Language::from_context(ui.ctx());
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
         ui.add_space(60.0);
         ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
             ui.add_space(60.0);
             ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
                 ui.add_space(15.0);
-                ui.heading(RichText::new(subtitle).size(20.0));
-                ui.add(Label::new(RichText::new(paragraph).size(14.0)).wrap());
+                ui.heading(RichText::new(language.text(subtitle)).size(20.0));
+                ui.add(Label::new(RichText::new(language.text(paragraph)).size(14.0)).wrap());
                 ui.add_space(30.0);
                 ui.vertical_centered(interactible_content);
             });
@@ -66,13 +68,14 @@ impl SetupWizard {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) -> Option<SetupWizardRequest> {
+        let language = Language::from_context(ui.ctx());
         let mut request = None;
 
         ui.horizontal(|ui| {
             ui.add_space(60.0);
             ui.vertical(|ui| {
                 ui.add_space(30.0);
-                ui.heading(RichText::new("Welcome to ALVR").size(30.0));
+                ui.heading(RichText::new(language.text("Welcome to FrameConnect")).size(30.0));
                 ui.add_space(5.0);
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -86,16 +89,16 @@ impl SetupWizard {
         match &self.page {
             Page::Welcome => page_content(
                 ui,
-                "This setup wizard will help you setup ALVR.",
+                "This wizard will help you set up FrameConnect.",
                 "",
                 |_| (),
             ),
             Page::ResetSettings => page_content(
                 ui,
-                "Reset settings",
+                language.text("Reset settings"),
                 "It is recommended to reset your settings everytime you update ALVR.",
                 |ui| {
-                    if ui.button("Reset settings").clicked() {
+                    if ui.button(language.text("Reset settings")).clicked() {
                         request = Some(SetupWizardRequest::ServerRequest(
                             ServerRequest::UpdateSession(Box::default()),
                         ));
@@ -122,7 +125,10 @@ Make sure you have at least one output audio device.",
                 #[allow(unused_variables)]
                 |ui| {
                     #[cfg(windows)]
-                    if ui.button("Download Virtual Audio Cable (Lite)").clicked() {
+                    if ui
+                        .button(language.text("Download Virtual Audio Cable (Lite)"))
+                        .clicked()
+                    {
                         ui.ctx().open_url(eframe::egui::OpenUrl::same_tab(
                             "https://software.muzychenko.net/freeware/vac470lite.zip",
                         ));
@@ -135,7 +141,7 @@ Make sure you have at least one output audio device.",
                 r"To communicate with the headset, some firewall rules need to be set.
 This requires administrator rights!",
                 |ui| {
-                    if ui.button("Add firewall rules").clicked() {
+                    if ui.button(language.text("Add firewall rules")).clicked() {
                         request = Some(SetupWizardRequest::ServerRequest(
                             ServerRequest::AddFirewallRules,
                         ));
@@ -151,7 +157,7 @@ This requires administrator rights!",
             Page::Finished => page_content(
                 ui,
                 "Finished",
-                r#"You can always restart this setup wizard from the "Installation" tab on the left."#,
+                r#"You can restart this wizard from Help center → Initial setup."#,
                 |_| (),
             ),
         };
@@ -161,14 +167,17 @@ This requires administrator rights!",
             ui.horizontal(|ui| {
                 ui.add_space(15.0);
                 if self.page == Page::Finished {
-                    if ui.button("Finish").clicked() {
+                    if ui.button(language.text("Finish")).clicked() {
                         request = Some(SetupWizardRequest::Close { finished: true });
                     }
-                } else if ui.button("Next").clicked() {
+                } else if ui.button(language.text("Next")).clicked() {
                     self.page = index_to_page(self.page as usize + 1);
                 }
                 if ui
-                    .add_visible(self.page != Page::Welcome, Button::new("Back"))
+                    .add_visible(
+                        self.page != Page::Welcome,
+                        Button::new(language.text("Back")),
+                    )
                     .clicked()
                 {
                     self.page = index_to_page(self.page as usize - 1);

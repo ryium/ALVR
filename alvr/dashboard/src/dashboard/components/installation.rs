@@ -1,4 +1,5 @@
 use crate::dashboard::ServerRequest;
+use crate::dashboard::i18n::Language;
 use alvr_gui_common::theme;
 use eframe::egui::{Frame, Grid, RichText, ScrollArea, Ui};
 use std::{
@@ -31,6 +32,7 @@ impl InstallationTab {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) -> Vec<InstallationTabRequest> {
+        let language = Language::from_context(ui.ctx());
         let mut requests = vec![];
 
         let now = Instant::now();
@@ -43,16 +45,19 @@ impl InstallationTab {
         }
 
         ui.vertical_centered_justified(|ui| {
-            if ui.button("Run setup wizard").clicked() {
+            if ui.button(language.text("Run setup wizard")).clicked() {
                 requests.push(InstallationTabRequest::OpenSetupWizard);
             }
             ui.columns(2, |ui| {
-                if ui[0].button("Add firewall rules").clicked() {
+                if ui[0].button(language.text("Add firewall rules")).clicked() {
                     requests.push(InstallationTabRequest::ServerRequest(
                         ServerRequest::AddFirewallRules,
                     ));
                 }
-                if ui[1].button("Remove firewall rules").clicked() {
+                if ui[1]
+                    .button(language.text("Remove firewall rules"))
+                    .clicked()
+                {
                     requests.push(InstallationTabRequest::ServerRequest(
                         ServerRequest::RemoveFirewallRules,
                     ));
@@ -64,12 +69,12 @@ impl InstallationTab {
                 .inner_margin(theme::FRAME_PADDING)
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
-                        ui.label(RichText::new("Registered drivers").size(18.0));
+                        ui.label(RichText::new(language.text("Registered drivers")).size(18.0));
                     });
 
                     Grid::new(0).num_columns(2).show(ui, |ui| {
                         for driver_path in &self.drivers {
-                            if ui.button("Remove").clicked() {
+                            if ui.button(language.text("Remove")).clicked() {
                                 requests.push(InstallationTabRequest::ServerRequest(
                                     ServerRequest::UnregisterDriver(driver_path.clone()),
                                 ));
@@ -85,7 +90,7 @@ impl InstallationTab {
                         }
                     });
 
-                    if ui.button("Register ALVR driver").clicked() {
+                    if ui.button(language.text("Register ALVR driver")).clicked() {
                         requests.push(InstallationTabRequest::ServerRequest(
                             ServerRequest::RegisterAlvrDriver,
                         ));

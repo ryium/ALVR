@@ -1,4 +1,7 @@
+use crate::dashboard::i18n::tr;
 mod components;
+pub(crate) mod i18n;
+use i18n::Language;
 
 use self::components::{
     DevicesTab, LogsTab, NotificationBar, SettingsTab, SetupWizard, SetupWizardRequest,
@@ -61,6 +64,8 @@ enum Tab {
 }
 
 pub struct Dashboard {
+    language: Language,
+    language_save_error: bool,
     frameconnect_tab: components::FrameConnectTab,
     show_advanced: bool,
     data_sources: DataSources,
@@ -103,6 +108,8 @@ impl Dashboard {
         data_sources.request(ServerRequest::GetSession);
 
         Self {
+            language: Language::load_local(),
+            language_save_error: false,
             frameconnect_tab: components::FrameConnectTab::default(),
             show_advanced: false,
             data_sources,
@@ -111,17 +118,17 @@ impl Dashboard {
             server_restarting_condvar: Arc::new(Condvar::new()),
             selected_tab: Tab::Home,
             tab_labels: [
-                (Tab::Home, "デバイス"),
-                (Tab::Settings, "設定"),
-                (Tab::Help, "ヘルプセンター"),
-                (Tab::AdvancedSettings, "ALVRの詳細設定"),
-                (Tab::Devices, "デバイスの管理"),
-                (Tab::Statistics, "パフォーマンス"),
+                (Tab::Home, "Devices"),
+                (Tab::Settings, "Settings"),
+                (Tab::Help, "Help center"),
+                (Tab::AdvancedSettings, "Advanced ALVR settings"),
+                (Tab::Devices, "Manage devices"),
+                (Tab::Statistics, "Performance"),
                 #[cfg(not(target_arch = "wasm32"))]
-                (Tab::Installation, "ドライバー管理"),
-                (Tab::Logs, "システムログ"),
-                (Tab::Debug, "デバッグ"),
-                (Tab::About, "ライセンス・情報"),
+                (Tab::Installation, "Driver management"),
+                (Tab::Logs, "System logs"),
+                (Tab::Debug, "Debug"),
+                (Tab::About, "Licenses and about"),
             ]
             .into_iter()
             .collect(),
@@ -168,6 +175,33 @@ impl Dashboard {
 
 impl eframe::App for Dashboard {
     fn ui(&mut self, ui: &mut Ui, _: &mut eframe::Frame) {
+        self.language.set_context(ui.ctx());
+        Panel::top("language_panel").show(ui, |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let previous = self.language;
+                egui::ComboBox::from_id_salt("ui_language")
+                    .selected_text(match self.language {
+                        Language::English => "English",
+                        Language::Japanese => "日本語",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.language, Language::English, "English");
+                        ui.selectable_value(&mut self.language, Language::Japanese, "日本語");
+                    });
+                ui.label("Language / 言語");
+                if previous != self.language {
+                    self.language.set_context(ui.ctx());
+                    self.language_save_error = self.language.save_local().is_err();
+                    ui.ctx().request_repaint();
+                }
+                if self.language_save_error {
+                    ui.colored_label(
+                        theme::WARN_YELLOW,
+                        tr(ui, "Could not save the language preference"),
+                    );
+                }
+            });
+        });
         let mut requests = vec![];
 
         let connected_to_server = self.data_sources.server_connected();
@@ -228,7 +262,7 @@ impl eframe::App for Dashboard {
                 // todo: find a way to center both vertically and horizontally
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.0);
-                    ui.heading(RichText::new("SteamVRを再起動しています").size(30.0));
+                    ui.heading(RichText::new(tr(ui, "Restarting SteamVR")).size(30.0));
                 });
             });
 
@@ -303,7 +337,7 @@ impl eframe::App for Dashboard {
                                 ui.horizontal(|ui| {
                                     components::desktop_icon(ui, icon, color);
                                     ui.label(
-                                        RichText::new(self.tab_labels[&tab])
+                                        RichText::new(tr(ui, self.tab_labels[&tab]))
                                             .color(color)
                                             .size(14.0),
                                     );
@@ -324,7 +358,7 @@ impl eframe::App for Dashboard {
                                 .color(theme::SUBTEXT),
                         );
                         ui.label(
-                            RichText::new("PCストリーミング")
+                            RichText::new(tr(ui, "PC streaming"))
                                 .size(11.0)
                                 .color(theme::SUBTEXT),
                         );
@@ -343,9 +377,9 @@ impl eframe::App for Dashboard {
                             );
                             ui.label(
                                 RichText::new(if connected_to_server {
-                                    "SteamVR 起動中"
+                                    tr(ui, "SteamVR running")
                                 } else {
-                                    "SteamVR 停止中"
+                                    tr(ui, "SteamVR stopped")
                                 })
                                 .size(12.0),
                             );
@@ -358,21 +392,21 @@ impl eframe::App for Dashboard {
                 .show(ui, |ui| {
                     ui.with_layout(Layout::top_down_justified(Align::LEFT), |ui| {
                         if !matches!(self.selected_tab, Tab::Home | Tab::Settings | Tab::Help) {
-                            if ui.small_button("‹ 設定に戻る").clicked() {
+                            if ui.small_button(tr(ui, "‹ Back to settings")).clicked() {
                                 self.selected_tab = Tab::Settings;
                             }
                             ui.add_space(8.0);
                         }
                         ui.label(
-                            RichText::new(self.tab_labels[&self.selected_tab])
+                            RichText::new(tr(ui, self.tab_labels[&self.selected_tab]))
                                 .size(24.0)
                                 .strong(),
                         );
                         let subtitle = match self.selected_tab {
-                            Tab::Home => "PCとSteam Frameをつなぐ",
-                            Tab::Settings => "お好みに合わせてストリーミングを調整",
-                            Tab::Help => "接続ガイドとトラブルシューティング",
-                            _ => "開発者向けツール",
+                            Tab::Home => tr(ui, "Connect your PC to Steam Frame"),
+                            Tab::Settings => tr(ui, "Adjust streaming to your preferences"),
+                            Tab::Help => tr(ui, "Connection guide and troubleshooting"),
+                            _ => tr(ui, "Developer tools"),
                         };
                         ui.label(RichText::new(subtitle).color(theme::SUBTEXT).size(12.0));
                         ui.add_space(20.0);
@@ -401,13 +435,13 @@ impl eframe::App for Dashboard {
                                         ));
                                         ui.add_space(24.0);
                                         ui.collapsing(
-                                            RichText::new("開発者向け")
+                                            RichText::new(tr(ui, "For developers"))
                                                 .size(12.0)
                                                 .color(theme::SUBTEXT),
                                             |ui| {
                                                 ui.checkbox(
                                                     &mut self.show_advanced,
-                                                    "ALVRの詳細ツールを表示",
+                                                    tr(ui, "Show advanced ALVR tools"),
                                                 );
                                                 if self.show_advanced {
                                                     ui.add_space(8.0);
@@ -423,7 +457,10 @@ impl eframe::App for Dashboard {
                                                             Tab::About,
                                                         ] {
                                                             if ui
-                                                                .button(self.tab_labels[&tab])
+                                                                .button(tr(
+                                                                    ui,
+                                                                    self.tab_labels[&tab],
+                                                                ))
                                                                 .clicked()
                                                             {
                                                                 self.selected_tab = tab;

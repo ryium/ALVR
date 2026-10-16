@@ -1,4 +1,5 @@
 use super::{NestingInfo, SettingControl, reset};
+use crate::dashboard::i18n::Language;
 use alvr_gui_common::DisplayString;
 use alvr_packets::PathValuePair;
 use alvr_session::settings_schema::{ChoiceControlType, SchemaEntry, SchemaNode};
@@ -104,6 +105,15 @@ impl Control {
         session_fragment: &mut json::Value,
         allow_inline: bool,
     ) -> Option<PathValuePair> {
+        let language = Language::from_context(ui.ctx());
+        let labels: Vec<_> = self
+            .variant_labels
+            .iter()
+            .map(|label| DisplayString {
+                id: label.id.clone(),
+                display: language.text(&label.display).to_owned(),
+            })
+            .collect();
         super::grid_flow_inline(ui, allow_inline);
 
         let session_variants_mut = session_fragment.as_object_mut().unwrap();
@@ -122,7 +132,7 @@ impl Control {
         let mut request = None;
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             if matches!(&self.gui, ChoiceControlType::ButtonGroup) {
-                if alvr_gui_common::button_group_clicked(ui, &self.variant_labels, variant_mut) {
+                if alvr_gui_common::button_group_clicked(ui, &labels, variant_mut) {
                     request = get_request(&self.nesting_info, variant_mut);
                 }
             } else if let Some(mut index) = self.variant_indices.get(variant_mut).cloned() {
@@ -130,7 +140,7 @@ impl Control {
                     ui,
                     &mut index,
                     self.variant_labels.len(),
-                    |idx| self.variant_labels[idx].display.clone(),
+                    |idx| labels[idx].display.clone(),
                 );
                 if response.changed() {
                     variant_mut.clone_from(&self.variant_labels[index].id);
@@ -148,9 +158,9 @@ impl Control {
                     self.variant_labels.len() + 1,
                     |idx| {
                         if idx == 0 {
-                            "Preset not applied".into()
+                            language.text("Preset not applied").to_owned()
                         } else {
-                            self.variant_labels[idx - 1].display.clone()
+                            labels[idx - 1].display.clone()
                         }
                     },
                 );

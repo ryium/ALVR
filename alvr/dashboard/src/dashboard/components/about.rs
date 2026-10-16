@@ -1,8 +1,10 @@
+use crate::dashboard::i18n::Language;
 use alvr_common::ALVR_VERSION;
 use alvr_gui_common::theme;
 use eframe::egui::{Frame, RichText, ScrollArea, Ui};
 
 pub fn about_tab_ui(ui: &mut Ui) {
+    let language = Language::from_context(ui.ctx());
     ui.label(RichText::new(format!("ALVR streamer v{}", *ALVR_VERSION)).size(30.0));
     ui.add_space(10.0);
     ui.hyperlink_to("Visit us on GitHub", "https://github.com/alvr-org/ALVR");
@@ -16,7 +18,7 @@ pub fn about_tab_ui(ui: &mut Ui) {
         "https://opencollective.com/alvr",
     );
     ui.add_space(10.0);
-    ui.label("License:");
+    ui.label(language.text("License:"));
     Frame::group(ui.style())
         .fill(theme::DARKER_BG)
         .inner_margin(theme::FRAME_PADDING)

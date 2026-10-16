@@ -1,3 +1,4 @@
+use crate::dashboard::i18n::Language;
 use crate::dashboard::{ServerRequest, theme::graph_colors};
 use alvr_events::{GraphStatistics, StatisticsSummary};
 use alvr_gui_common::theme;
@@ -215,6 +216,7 @@ impl StatisticsTab {
     }
 
     fn draw_fps_graph(&self, ui: &mut Ui, available_width: f32) {
+        let language = Language::from_context(ui.ctx());
         let mut data = statistics::Data::new(
             self.history
                 .iter()
@@ -232,7 +234,7 @@ impl StatisticsTab {
         self.draw_graph(
             ui,
             available_width,
-            "Framerate",
+            language.text("Framerate"),
             min as f32..=max as f32,
             |painter, to_screen_trans| {
                 let (server_fps_points, client_fps_points) = (0..GRAPH_HISTORY_SIZE)
@@ -433,37 +435,38 @@ impl StatisticsTab {
     }
 
     fn draw_statistics_overview(&self, ui: &mut Ui, statistics: &StatisticsSummary) {
+        let language = Language::from_context(ui.ctx());
         ui.add_space(10.0);
 
         ui.columns(2, |ui| {
-            ui[0].label("Total packets:");
+            ui[0].label(language.text("Total packets:"));
             ui[1].label(format!(
                 "{} packets ({} packets/s)",
                 statistics.video_packets_total, statistics.video_packets_per_sec
             ));
 
-            ui[0].label("Total sent:");
+            ui[0].label(language.text("Total sent:"));
             ui[1].label(format!("{} MB", statistics.video_mbytes_total));
 
-            ui[0].label("Bitrate:");
+            ui[0].label(language.text("Bitrate:"));
             ui[1].label(format!("{:.1} Mbps", statistics.video_mbits_per_sec));
 
-            ui[0].label("Total latency:");
+            ui[0].label(language.text("Total latency:"));
             ui[1].label(format!("{:.0} ms", statistics.total_latency_ms));
 
-            ui[0].label("Encoder latency:");
+            ui[0].label(language.text("Encoder latency:"));
             ui[1].label(format!("{:.2} ms", statistics.encode_latency_ms));
 
-            ui[0].label("Transport latency:");
+            ui[0].label(language.text("Transport latency:"));
             ui[1].label(format!("{:.2} ms", statistics.network_latency_ms));
 
-            ui[0].label("Decoder latency:");
+            ui[0].label(language.text("Decoder latency:"));
             ui[1].label(format!("{:.2} ms", statistics.decode_latency_ms));
 
-            ui[0].label("Client FPS:");
+            ui[0].label(language.text("Client FPS:"));
             ui[1].label(format!("{} FPS", statistics.client_fps));
 
-            ui[0].label("Streamer FPS:");
+            ui[0].label(language.text("Streamer FPS:"));
             ui[1].label(format!("{} FPS", statistics.server_fps));
 
             ui[0].label("Headset battery");

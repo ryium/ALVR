@@ -123,13 +123,16 @@ impl RateMonitor {
         let delivered = self.frames as f64 / self.elapsed;
         let reason = if delivered < self.rate as f64 * 0.99 {
             Some(format!(
-                "実配信 {:.1} fps が目標 {:.0} Hz に届かないため、画質を維持して表示周期を下げます",
+                "Streaming at {:.1} fps is below the {:.0} Hz target. Lowering the refresh rate while preserving quality.",
                 delivered, self.rate
             ))
         } else if self.decode_overruns as f64 / self.frames as f64 > 0.05 {
-            Some("復号処理がフレーム時間を超えるため、画質を維持して表示周期を下げます".into())
+            Some("Decoding exceeds the frame budget. Lowering the refresh rate while preserving quality.".into())
         } else if self.queue_end - self.queue_start.unwrap_or(0.0) > 2.0 / self.rate as f64 {
-            Some("復号待ちが増えているため、画質を維持して表示周期を下げます".into())
+            Some(
+                "The decode queue is growing. Lowering the refresh rate while preserving quality."
+                    .into(),
+            )
         } else {
             None
         };

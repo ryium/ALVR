@@ -1,4 +1,5 @@
 use crate::dashboard::ServerRequest;
+use crate::dashboard::i18n::Language;
 use alvr_gui_common::ModalButton;
 use alvr_packets::PathValuePair;
 use eframe::egui::{self, Context, OpenUrl, Ui};
@@ -34,12 +35,16 @@ impl NewVersionPopup {
     }
 
     pub fn ui(&self, context: &Context, shutdown_alvr_cb: impl Fn()) -> Option<CloseAction> {
-        let no_remind_button =
-            ModalButton::Custom("Don't remind me again for this version".to_string());
+        let language = Language::from_context(context);
+        let no_remind_button = ModalButton::Custom(
+            language
+                .text("Don't remind me again for this version")
+                .to_string(),
+        );
 
         let result = alvr_gui_common::modal(
             context,
-            "New ALVR version available",
+            language.text("New ALVR version available"),
             Some(|ui: &mut Ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(10.0);
@@ -51,15 +56,17 @@ impl NewVersionPopup {
                             ui.spacing_mut().item_spacing.x = 5.0;
                             ui.style_mut().spacing.button_padding = egui::vec2(10.0, 4.0);
 
-                            ui.heading("You can download this version using the launcher:");
+                            ui.heading(
+                                language.text("You can download this version using the launcher:"),
+                            );
 
                             if let Some(path) = &self.launcher_path {
-                                if ui.button("Open Launcher").clicked()
+                                if ui.button(language.text("Open Launcher")).clicked()
                                     && Command::new(path).spawn().is_ok()
                                 {
                                     shutdown_alvr_cb();
                                 }
-                            } else if ui.button("Download Launcher").clicked() {
+                            } else if ui.button(language.text("Download Launcher")).clicked() {
                                 let base_url =
                                     "https://github.com/alvr-org/ALVR/releases/latest/download/";
                                 let file = if cfg!(windows) {
@@ -76,7 +83,7 @@ impl NewVersionPopup {
 
                         ui.label(&self.message);
                         ui.hyperlink_to(
-                            "Releases page",
+                            language.text("Releases page"),
                             "https://github.com/alvr-org/ALVR/releases",
                         );
                     });
@@ -84,7 +91,10 @@ impl NewVersionPopup {
                     ui.add_space(10.0);
                 });
             }),
-            &[no_remind_button.clone(), ModalButton::Close],
+            &[
+                no_remind_button.clone(),
+                ModalButton::Custom(language.text("Close").to_owned()),
+            ],
             Some(490.0),
         );
 

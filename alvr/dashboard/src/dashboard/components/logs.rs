@@ -1,3 +1,4 @@
+use crate::dashboard::i18n::Language;
 use alvr_common::LogSeverity;
 use alvr_events::{Event, EventType};
 use alvr_gui_common::theme::log_colors;
@@ -73,8 +74,9 @@ impl LogsTab {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
+        let language = Language::from_context(ui.ctx());
         ui.horizontal(|ui| {
-            if ui.button("Copy all").clicked() {
+            if ui.button(language.text("Copy all")).clicked() {
                 ui.output_mut(|out| {
                     out.commands
                         .push(OutputCommand::CopyText(self.entries.iter().fold(
@@ -88,14 +90,14 @@ impl LogsTab {
                         )));
                 })
             }
-            if ui.button("Open logs directory").clicked() {
+            if ui.button(language.text("Open logs directory")).clicked() {
                 let log_dir = crate::get_filesystem_layout().log_dir;
                 ui.ctx().open_url(OpenUrl::same_tab(format!(
                     "file://{}",
                     log_dir.to_string_lossy()
                 )));
             }
-            if ui.button("Clear all").clicked() {
+            if ui.button(language.text("Clear all")).clicked() {
                 self.entries.clear();
             }
         });

@@ -660,14 +660,14 @@ fn connection_pipeline(
     let caps = streaming_caps.ext().to_con()?.frameconnect;
     let Some(caps) = caps else {
         con_bail!(
-            "FrameConnectの同じバージョンの受信アプリを使用してください。端末の診断情報がありません。"
+            "Use the same FrameConnect build on the receiver. Device diagnostics are missing."
         );
     };
     if caps.version != alvr_common::frameconnect::CAPABILITY_VERSION {
-        con_bail!("FrameConnectの能力情報のバージョンが一致しません。");
+        con_bail!("FrameConnect capability versions do not match.");
     }
     if let Some(error) = &caps.probe_error {
-        con_bail!("端末のハードウェアデコーダーを確認できません: {error}");
+        con_bail!("Could not verify the device hardware decoder: {error}");
     }
     if initial_settings.video.force_software_decoder
         || initial_settings
@@ -676,12 +676,12 @@ fn connection_pipeline(
             .software
             .force_software_encoding
     {
-        con_bail!("FrameConnectはハードウェアのエンコード・デコードを必要とします。");
+        con_bail!("FrameConnect requires hardware encoding and decoding.");
     }
     let mime = match initial_settings.video.preferred_codec {
         CodecType::AV1 => "video/av01",
         CodecType::Hevc => "video/hevc",
-        _ => con_bail!("FrameConnect初版ではAV1またはHEVCを選択してください。"),
+        _ => con_bail!("Select AV1 or HEVC for this FrameConnect release."),
     };
     let ten_bit = initial_settings
         .video
@@ -728,14 +728,14 @@ fn connection_pipeline(
     );
     let Some(fps) = fps else {
         con_bail!(
-            "選択した画質・コーデックに対応するハードウェア復号経路がありません。画質を下げるか、端末の表示設定と診断ログを確認してください。HEVCへの自動切替は行いません。"
+            "No hardware decode path supports the selected quality and codec. Lower the quality or check the device display settings and diagnostic logs. Automatic HEVC fallback is disabled."
         );
     };
     if !initial_settings.video.frameconnect_auto_refresh_rate
         && (fps - initial_settings.video.preferred_fps).abs() > 0.5
     {
         con_bail!(
-            "指定した表示周期に端末が対応していません。自動設定または対応する周期を選択してください。"
+            "The device does not support the requested refresh rate. Select automatic or a supported rate."
         );
     }
     let decoder_name = caps
@@ -753,7 +753,7 @@ fn connection_pipeline(
         && config.sink.eye_tracked_foveated_encoding
         && !caps.eye_gaze
     {
-        con_bail!("端末で視線追従を利用できません。視線追従を無効にしてください。");
+        con_bail!("Eye tracking is unavailable on this device. Disable eye tracking.");
     }
     {
         let mut session = session_manager_lock.session_mut();
@@ -867,7 +867,9 @@ fn connection_pipeline(
         .enable
         .unwrap_or(false);
     if enable_hdr && !enable_10_bits_encoding {
-        con_bail!("HDRには10bitの明示選択と対応するハードウェア復号経路が必要です。");
+        con_bail!(
+            "HDR requires explicitly selecting 10-bit color and a compatible hardware decode path."
+        );
     }
 
     let encoding_gamma = initial_settings
@@ -1246,7 +1248,7 @@ fn connection_pipeline(
                             crate::notify_restart_driver();
                             return;
                         } else {
-                            manager.session_mut().frameconnect.reason = Some("90Hzでも安定条件に届いていません。ゲーム負荷・Wi-Fi・診断ログを確認してください。".into());
+                            manager.session_mut().frameconnect.reason = Some("Streaming is unstable even at 90 Hz. Check game load, Wi-Fi and diagnostic logs.".into());
                         }
                     }
                 }

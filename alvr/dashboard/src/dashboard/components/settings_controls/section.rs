@@ -1,4 +1,5 @@
 use super::{INDENTATION_STEP, NestingInfo, SettingControl, collapsible, notice};
+use crate::dashboard::i18n::tr;
 use alvr_gui_common::{
     DisplayString,
     theme::{
@@ -109,14 +110,14 @@ impl Control {
 
                 ui.horizontal(|ui| {
                     ui.add_space(INDENTATION_STEP * self.nesting_info.indentation_level as f32);
-                    let label_res = ui.label(&entry.id.display);
+                    let label_res = ui.label(tr(ui, &entry.id.display));
                     if cfg!(debug_assertions) {
                         label_res.on_hover_text_at_pointer(&*entry.id);
                     }
 
                     if let Some(string) = &entry.help {
                         ui.colored_label(INFO_LIGHT, "❓")
-                            .on_hover_text_at_pointer(string);
+                            .on_hover_text_at_pointer(tr(ui, string));
                     }
                     if entry.steamvr_restart_flag {
                         ui.colored_label(WARNING_LIGHT, "⚠")
@@ -134,7 +135,7 @@ impl Control {
                 });
 
                 if let Some(string) = &entry.notice {
-                    notice::notice(ui, string);
+                    notice::notice(ui, tr(ui, string));
 
                     ui.end_row();
 
