@@ -229,7 +229,7 @@ fn main() {
                     }
                 }
                 "build-streamer" => {
-                    build::build_streamer(profile, gpl, None, false, profiling, keep_config)
+                    build::build_streamer(profile, gpl, None, for_ci, profiling, keep_config)
                 }
                 "build-launcher" => build::build_launcher(profile, false),
                 "build-server-lib" => build::build_server_lib(profile, None, false),
