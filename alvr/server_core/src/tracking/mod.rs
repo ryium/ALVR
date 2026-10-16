@@ -30,7 +30,7 @@ use std::{
     cmp::Ordering,
     collections::{HashMap, VecDeque},
     f32::consts::PI,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const DEG_TO_RAD: f32 = PI / 180.0;
@@ -288,6 +288,13 @@ pub fn tracking_loop(
     is_streaming: impl Fn() -> bool,
 ) {
     let mut hand_gesture_manager = HandGestureManager::new();
+    let gaze_foveation = initial_settings
+        .headset
+        .face_tracking
+        .as_option()
+        .is_some_and(|config| config.sink.eye_tracked_foveated_encoding);
+    let gaze_started = Instant::now();
+    let mut last_valid_gaze: Option<Instant> = None;
 
     let mut gestures_button_mapping_manager =
         initial_settings
@@ -340,6 +347,25 @@ pub fn tracking_loop(
         .and_then(|config| VMCSink::new(config).ok());
 
     while is_streaming() {
+        // Allow runtime startup, then recover to full-frame encoding if gaze disappears.
+        if gaze_foveation
+            && last_valid_gaze.map_or_else(
+                || gaze_started.elapsed() > Duration::from_secs(5),
+                |last| last.elapsed() > Duration::from_millis(500),
+            )
+        {
+            {
+                let mut manager = SESSION_MANAGER.write();
+                let mut session = manager.session_mut();
+                session.session_settings.video.foveated_encoding.enabled = false;
+                session.session_settings.headset.face_tracking.enabled = false;
+                session.frameconnect.reason = Some(
+                    "視線が取得できないため、視線追従を解除して全画面の画質で再接続します".into(),
+                );
+            }
+            crate::notify_restart_driver();
+            return;
+        }
         let data = match tracking_receiver.recv(STREAMING_RECV_TIMEOUT) {
             Ok(tracking) => tracking,
             Err(ConnectionError::TryAgain(_)) => continue,
@@ -368,6 +394,16 @@ pub fn tracking_loop(
             } else {
                 None
             };
+        }
+
+        if tracking
+            .face
+            .eyes_combined
+            .is_some_and(|gaze| gaze.is_finite() && gaze.is_normalized())
+        {
+            last_valid_gaze = Some(Instant::now());
+        } else {
+            tracking.face.eyes_combined = None;
         }
 
         if let Some(stats) = &mut *ctx.statistics_manager.write() {

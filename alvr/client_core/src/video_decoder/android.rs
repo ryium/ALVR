@@ -57,6 +57,9 @@ impl VideoDecoderSink {
 
         match decoder.dequeue_input_buffer(Duration::ZERO) {
             Ok(DequeuedInputBufferResult::Buffer(mut buffer)) => {
+                if data.len() > buffer.buffer_mut().len() {
+                    bail!("Encoded frame exceeds MediaCodec input buffer capacity");
+                }
                 unsafe {
                     ptr::copy_nonoverlapping(
                         data.as_ptr(),
@@ -157,6 +160,7 @@ fn mime_for_codec(codec: CodecType) -> &'static str {
 fn decoder_setup(
     codec_type: CodecType,
     is_software: bool,
+    decoder_name: Option<&str>,
     format: &MediaFormat,
     image_reader: &ImageReader,
 ) -> Result<MediaCodec> {
@@ -168,6 +172,8 @@ fn decoder_setup(
         };
         MediaCodec::from_codec_name(&sw_codec_name)
             .ok_or(anyhow!("no such codec: {}", &sw_codec_name))?
+    } else if let Some(name) = decoder_name {
+        MediaCodec::from_codec_name(name).ok_or(anyhow!("Hardware decoder unavailable: {name}"))?
     } else {
         let mime = mime_for_codec(codec_type);
         MediaCodec::from_decoder_type(&mime)
@@ -251,8 +257,8 @@ fn decoder_lifecycle(
     format.set_str("mime", mime);
     // Given https://github.com/alvr-org/ALVR/pull/1933#discussion_r1431902906 - change at own risk.
     // It might be harmless, it might not be, but it's definitely a risk.
-    format.set_i32("width", 512);
-    format.set_i32("height", 1024);
+    format.set_i32("width", config.encoded_width.max(1) as i32);
+    format.set_i32("height", config.encoded_height.max(1) as i32);
     format.set_buffer("csd-0", &csd_0);
 
     for (key, prop) in &config.options {
@@ -282,21 +288,13 @@ fn decoder_lifecycle(
 
     info!("Using AMediaCodec format:{} ", format);
 
-    let decoder = if config.force_software_decoder {
-        decoder_setup(config.codec, true, &format, &image_reader)?
-    } else {
-        // Hardware decoders sometimes fail at the CSD-0.
-        // May as well fall back if this occurs.
-        match decoder_setup(config.codec, false, &format, &image_reader) {
-            Ok(d) => d,
-            Err(e) => {
-                // would be "warn!" but this is a severe caveat and a pretty major error.
-                error!("Attempting software fallback due to error in default decoder: {e:#}");
-
-                decoder_setup(config.codec, true, &format, &image_reader)?
-            }
-        }
-    };
+    let decoder = decoder_setup(
+        config.codec,
+        config.force_software_decoder,
+        config.decoder_name.as_deref(),
+        &format,
+        &image_reader,
+    )?;
 
     let decoder = Arc::new(FakeThreadSafe(decoder));
 
@@ -407,7 +405,14 @@ pub fn video_decoder_split(
 
         if decoder_lock.is_none() {
             // No spurious wakeups
-            decoder_ready_notifier.wait(&mut decoder_lock);
+            decoder_ready_notifier.wait_for(&mut decoder_lock, Duration::from_secs(5));
+            if decoder_lock.is_none() {
+                running.set(false);
+                // Do not block the OpenXR thread waiting for an unresponsive driver thread.
+                bail!(
+                    "Hardware decoder failed to start within five seconds; see client diagnostic log"
+                );
+            }
         }
     }
 

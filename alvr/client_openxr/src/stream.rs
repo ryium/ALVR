@@ -1,5 +1,5 @@
 use crate::{
-    graphics::{self, ProjectionLayerAlphaConfig, ProjectionLayerBuilder},
+    graphics::{self, ClientGraphics, ProjectionLayerAlphaConfig, ProjectionLayerBuilder},
     interaction::{self, InteractionContext, InteractionSourcesConfig},
 };
 use alvr_client_core::{
@@ -23,16 +23,18 @@ use alvr_session::{
 use alvr_system_info::Platform;
 use openxr as xr;
 use std::{
-    ptr,
     rc::Rc,
     sync::Arc,
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
-const DECODER_MAX_TIMEOUT_MULTIPLIER: f32 = 0.8;
+const DECODER_MAX_TIMEOUT_MULTIPLIER: f32 = 1.2;
 
 pub struct ParsedStreamConfig {
+    pub decoder_name: Option<String>,
+    pub encoded_width: u32,
+    pub encoded_height: u32,
     pub view_resolution: UVec2,
     pub refresh_rate_hint: f32,
     pub encoding_gamma: f32,
@@ -51,7 +53,14 @@ pub struct ParsedStreamConfig {
 
 impl ParsedStreamConfig {
     pub fn new(config: &ClientStreamConfig) -> Self {
+        let ext = config
+            .negotiated_config
+            .ext()
+            .expect("FrameConnect negotiated configuration");
         Self {
+            decoder_name: Some(ext.decoder_name),
+            encoded_width: ext.encoded_width,
+            encoded_height: ext.encoded_height,
             view_resolution: config.negotiated_config.view_resolution,
             refresh_rate_hint: config.negotiated_config.refresh_rate_hint,
             encoding_gamma: config.negotiated_config.encoding_gamma,
@@ -82,11 +91,11 @@ impl ParsedStreamConfig {
 
 pub struct StreamContext {
     core_context: Arc<ClientCoreContext>,
-    xr_session: xr::Session<xr::OpenGlEs>,
+    xr_session: xr::Session<ClientGraphics>,
     interaction_context: Arc<RwLock<InteractionContext>>,
     stage_reference_space: Arc<xr::Space>,
     view_reference_space: Arc<xr::Space>,
-    swapchains: [xr::Swapchain<xr::OpenGlEs>; 2],
+    swapchains: [xr::Swapchain<ClientGraphics>; 2],
     last_good_video_frame_metadata: VideoFrameMetadata,
     input_thread: Option<JoinHandle<()>>,
     input_thread_running: Arc<RelaxedAtomic>,
@@ -100,7 +109,7 @@ pub struct StreamContext {
 impl StreamContext {
     pub fn new(
         core_ctx: Arc<ClientCoreContext>,
-        xr_session: xr::Session<xr::OpenGlEs>,
+        xr_session: xr::Session<ClientGraphics>,
         gfx_ctx: Rc<GraphicsContext>,
         interaction_ctx: Arc<RwLock<InteractionContext>>,
         config: ParsedStreamConfig,
@@ -110,12 +119,6 @@ impl StreamContext {
             .select_sources(&config.interaction_sources);
 
         let xr_exts = xr_session.instance().exts();
-
-        if xr_exts.fb_display_refresh_rate.is_some() {
-            xr_session
-                .request_display_refresh_rate(config.refresh_rate_hint)
-                .unwrap();
-        }
 
         let foveation_profile = if let Some(config) = &config.clientside_foveation_config
             && xr_exts.fb_swapchain_update_state.is_some()
@@ -301,6 +304,9 @@ impl StreamContext {
 
     pub fn maybe_initialize_decoder(&mut self, codec: CodecType, config_nal: Vec<u8>) {
         let new_config = VideoDecoderConfig {
+            decoder_name: self.config.decoder_name.clone(),
+            encoded_width: self.config.encoded_width,
+            encoded_height: self.config.encoded_height,
             codec,
             force_software_decoder: self.config.force_software_decoder,
             max_buffering_frames: self.config.max_buffering_frames,
@@ -316,13 +322,20 @@ impl StreamContext {
         };
 
         if let Some(config) = maybe_config {
-            let (mut sink, source) = video_decoder::create_decoder(config.clone(), {
+            let result = video_decoder::create_decoder(config.clone(), {
                 let ctx = Arc::clone(&self.core_context);
                 move |maybe_timestamp: Result<Duration>| match maybe_timestamp {
                     Ok(timestamp) => ctx.report_frame_decoded(timestamp),
                     Err(e) => ctx.report_fatal_decoder_error(&e.to_string()),
                 }
             });
+            let (mut sink, source) = match result {
+                Ok(pair) => pair,
+                Err(e) => {
+                    self.core_context.report_fatal_decoder_error(&e.to_string());
+                    return;
+                }
+            };
             self.decoder = Some((config, source));
 
             self.core_context.set_decoder_input_callback(Box::new(
@@ -354,8 +367,8 @@ impl StreamContext {
             }
         }
 
-        let (timestamp, frame_metadata, buffer_ptr) =
-            if let Some((timestamp, buffer_ptr)) = frame_result {
+        let (timestamp, frame_metadata, video_frame) =
+            if let Some((timestamp, frame)) = frame_result {
                 if let Some(metadata) = self.core_context.report_compositor_start(timestamp) {
                     self.last_good_video_frame_metadata = VideoFrameMetadata {
                         foveation_center_shifts: metadata
@@ -366,12 +379,12 @@ impl StreamContext {
                 }
 
                 // Keep displaying new images even when their metadata is unavailable.
-                (timestamp, self.last_good_video_frame_metadata, buffer_ptr)
+                (timestamp, self.last_good_video_frame_metadata, Some(frame))
             } else {
                 (
                     vsync_time,
                     self.last_good_video_frame_metadata,
-                    ptr::null_mut(),
+                    None,
                 )
             };
         let view_params = frame_metadata.view_params;
@@ -409,21 +422,31 @@ impl StreamContext {
         // `timestamp` is generally a current vsync time, but may be repeated if frames are
         // dropped. Some runtimes dislike it if the timestamp is repeated for too long, so after
         // one second we begin presenting a lagged vsync time instead.
-        let mut openxr_display_time =
-            Duration::max(timestamp, vsync_time.saturating_sub(Duration::from_secs(1)));
+        let mut openxr_display_time = if cfg!(target_os = "android") {
+            Duration::max(timestamp, vsync_time.saturating_sub(Duration::from_secs(1)))
+        } else {
+            vsync_time
+        };
 
         // (shinyquagsire23) I don't entirely trust runtimes to implement CompositionLayerProjectionView
         // correctly, but if we do trust them, avoid doing rotation ourselves. Otherwise, rerender.
         // Ex: YVR/PFDMR has issues with aspect ratio mismatches and passthrough compositing.
         if self.use_custom_reprojection {
+            let overdraw_ratio = crate::interaction::get_fov_overdraw_ratio();
             output_view_params = [
                 ViewParams {
                     pose: crate::from_xr_pose(current_headset_views[0].pose),
-                    fov: crate::from_xr_fov(current_headset_views[0].fov),
+                    fov: crate::interaction::scale_fov(
+                        crate::from_xr_fov(current_headset_views[0].fov),
+                        overdraw_ratio,
+                    ),
                 },
                 ViewParams {
                     pose: crate::from_xr_pose(current_headset_views[1].pose),
-                    fov: crate::from_xr_fov(current_headset_views[1].fov),
+                    fov: crate::interaction::scale_fov(
+                        crate::from_xr_fov(current_headset_views[1].fov),
+                        overdraw_ratio,
+                    ),
                 },
             ];
 
@@ -431,7 +454,7 @@ impl StreamContext {
         }
 
         self.renderer.render(
-            buffer_ptr,
+            video_frame.as_ref(),
             [
                 StreamViewParams {
                     swapchain_index: left_swapchain_idx,
@@ -453,7 +476,7 @@ impl StreamContext {
         self.swapchains[0].release_image().unwrap();
         self.swapchains[1].release_image().unwrap();
 
-        if !buffer_ptr.is_null()
+        if video_frame.is_some()
             && let Some(xr_now) = crate::xr_runtime_now(self.xr_session.instance())
         {
             self.core_context.report_submit(
@@ -528,7 +551,7 @@ impl Drop for StreamContext {
 
 fn stream_input_loop(
     core_ctx: &ClientCoreContext,
-    xr_session: xr::Session<xr::OpenGlEs>,
+    xr_session: xr::Session<ClientGraphics>,
     interaction_ctx: &RwLock<InteractionContext>,
     stage_reference_space: &xr::Space,
     view_reference_space: &xr::Space,
@@ -601,16 +624,13 @@ fn stream_input_loop(
             &mut last_palm_poses[1],
         );
 
-        // Note: When multimodal input is enabled, we are sure that when free hands are used
-        // (not holding controllers) the controller data is None.
-        if (int_ctx.multimodal_hands_enabled || left_hand_data.skeleton_joints.is_none())
-            && let Some(motion) = left_hand_data.grip_motion
-        {
+        // When physical controllers are held and active, grip_motion is Some.
+        // We must always send controller motion if present, even when hand tracking skeleton
+        // joints are also provided by the OpenXR runtime (such as on Steam Frame).
+        if let Some(motion) = left_hand_data.grip_motion {
             device_motions.push((*HAND_LEFT_ID, motion));
         }
-        if (int_ctx.multimodal_hands_enabled || right_hand_data.skeleton_joints.is_none())
-            && let Some(motion) = right_hand_data.grip_motion
-        {
+        if let Some(motion) = right_hand_data.grip_motion {
             device_motions.push((*HAND_RIGHT_ID, motion));
         }
 

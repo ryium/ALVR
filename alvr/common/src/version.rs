@@ -28,9 +28,9 @@ pub fn is_stable() -> bool {
 // Only makor and
 pub fn protocol_id() -> String {
     if ALVR_VERSION.pre.is_empty() {
-        ALVR_VERSION.major.to_string()
+        format!("frameconnect-1-{}", ALVR_VERSION.major)
     } else {
-        format!("{}-{}", ALVR_VERSION.major, ALVR_VERSION.pre)
+        format!("frameconnect-1-{}-{}", ALVR_VERSION.major, ALVR_VERSION.pre)
     }
 }
 
@@ -41,9 +41,12 @@ pub fn protocol_id_u64() -> u64 {
 // deprecated
 pub fn is_version_compatible(other_version: &Version) -> bool {
     let protocol_string = if other_version.pre.is_empty() {
-        other_version.major.to_string()
+        format!("frameconnect-1-{}", other_version.major)
     } else {
-        format!("{}-{}", other_version.major, other_version.pre)
+        format!(
+            "frameconnect-1-{}-{}",
+            other_version.major, other_version.pre
+        )
     };
 
     protocol_id_u64() == hash_string(&protocol_string)

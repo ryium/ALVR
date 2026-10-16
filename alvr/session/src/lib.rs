@@ -43,6 +43,8 @@ pub struct ClientConnectionConfig {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SessionConfig {
+    #[serde(default)]
+    pub frameconnect: FrameConnectSession,
     pub server_version: Version,
     // The hashmap key is the hostname
     pub client_connections: HashMap<String, ClientConnectionConfig>,
@@ -54,6 +56,7 @@ pub struct SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
+            frameconnect: FrameConnectSession::default(),
             server_version: ALVR_VERSION.clone(),
             client_connections: HashMap::new(),
             session_settings: settings::session_settings_default(),
@@ -69,6 +72,26 @@ impl Default for SessionConfig {
             },
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct FrameConnectSession {
+    pub selection_key: String,
+    pub rate_ceiling: Option<f32>,
+    pub reason: Option<String>,
+    pub negotiated: Option<FrameConnectNegotiated>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct FrameConnectNegotiated {
+    pub hostname: String,
+    pub codec: String,
+    pub decoder: String,
+    pub eye_width: u32,
+    pub eye_height: u32,
+    pub refresh_rate: f32,
+    pub ten_bit: bool,
+    pub capabilities: alvr_common::frameconnect::FrameConnectCapabilities,
 }
 
 impl SessionConfig {

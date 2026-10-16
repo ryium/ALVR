@@ -11,7 +11,7 @@ pub struct PassthroughHTC {
 }
 
 impl PassthroughHTC {
-    pub fn new(session: &xr::Session<xr::OpenGlEs>) -> xr::Result<Self> {
+    pub fn new<G>(session: &xr::Session<G>) -> xr::Result<Self> {
         let ext_fns = session
             .instance()
             .exts()

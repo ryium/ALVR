@@ -1,5 +1,7 @@
 #[cfg(target_os = "android")]
 pub mod android;
+pub mod decoder_probe;
+pub mod v4l2_probe;
 
 #[cfg(target_os = "android")]
 pub use android::*;
@@ -35,6 +37,7 @@ pub enum Platform {
     Yvr,
     PlayForDreamMR,
     SamsungGalaxyXR,
+    SteamFrame,
     AndroidUnknown,
     VisionOSHeadset,
     WindowsPc,
@@ -104,6 +107,7 @@ impl Display for Platform {
             Self::Yvr => "YVR",
             Self::PlayForDreamMR => "Play For Dream MR",
             Self::SamsungGalaxyXR => "Samsung Galaxy XR",
+            Self::SteamFrame => "Steam Frame",
             Self::AndroidUnknown => "Android (unknown)",
             Self::VisionOSHeadset => "visionOS Headset",
             Self::WindowsPc => "Windows PC",
@@ -113,6 +117,18 @@ impl Display for Platform {
         };
         write!(f, "{name}")
     }
+}
+
+pub fn is_steam_frame_os(os_release: &str, arch: &str) -> bool {
+    arch == "aarch64"
+        && os_release.lines().any(|l| {
+            let t = l.trim();
+            t == "ID=steamos" || t == "ID=\"steamos\""
+        })
+        && os_release.lines().any(|l| {
+            let t = l.trim();
+            t == "VARIANT_ID=vr" || t == "VARIANT_ID=\"vr\""
+        })
 }
 
 #[cfg_attr(not(target_os = "android"), expect(unused_variables))]
@@ -163,6 +179,13 @@ pub fn platform(runtime_name: Option<String>, runtime_version: Option<u64>) -> P
     }
     #[cfg(not(target_os = "android"))]
     {
+        if std::env::consts::OS == "linux" && std::env::consts::ARCH == "aarch64" {
+            if let Ok(os_release) = std::fs::read_to_string("/etc/os-release") {
+                if is_steam_frame_os(&os_release, std::env::consts::ARCH) {
+                    return Platform::SteamFrame;
+                }
+            }
+        }
         match std::env::consts::OS {
             "visionos" => Platform::VisionOSHeadset,
             "windows" => Platform::WindowsPc,
@@ -180,9 +203,59 @@ pub fn local_ip() -> std::net::IpAddr {
     local_ip_address::local_ip().unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
 }
 
+#[cfg(target_os = "linux")]
+pub fn get_battery_status() -> (f32, bool) {
+    let power_supply_paths = [
+        "/sys/class/power_supply/max1720x_bat_7-36",
+        "/sys/class/power_supply/BAT0",
+        "/sys/class/power_supply/battery",
+    ];
+
+    for base in power_supply_paths {
+        if let Ok(cap_str) = std::fs::read_to_string(format!("{base}/capacity")) {
+            if let Ok(val) = cap_str.trim().parse::<f32>() {
+                let status = std::fs::read_to_string(format!("{base}/status")).unwrap_or_default();
+                let is_plugged = status.trim().eq_ignore_ascii_case("charging")
+                    || status.trim().eq_ignore_ascii_case("full");
+                return (val / 100.0, is_plugged);
+            }
+        }
+    }
+
+    (1.0, true)
+}
+
 #[derive(SettingsSchema, Serialize, Deserialize, Clone)]
 pub enum ClientFlavor {
     Store,
     Github,
     Custom(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_steam_frame_detection() {
+        let steamos_release = r#"NAME="SteamOS"
+PRETTY_NAME="SteamOS"
+VERSION_CODENAME=holo
+ID=steamos
+ID_LIKE=arch
+VARIANT_ID="vr"
+VERSION_ID=0.4.3"#;
+
+        assert!(is_steam_frame_os(steamos_release, "aarch64"));
+        assert!(!is_steam_frame_os(steamos_release, "x86_64"));
+
+        let desktop_steamos = r#"NAME="SteamOS"
+ID=steamos
+VARIANT_ID="desktop""#;
+        assert!(!is_steam_frame_os(desktop_steamos, "aarch64"));
+
+        let ubuntu_release = r#"NAME="Ubuntu"
+ID=ubuntu"#;
+        assert!(!is_steam_frame_os(ubuntu_release, "aarch64"));
+    }
 }

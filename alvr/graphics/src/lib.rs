@@ -1,9 +1,11 @@
 mod lobby;
 mod staging;
 mod stream;
+pub mod video_frame;
 
 pub use lobby::*;
 pub use stream::*;
+pub use video_frame::*;
 
 use alvr_common::{
     DeviceMotion, Fov, Pose,
@@ -11,6 +13,7 @@ use alvr_common::{
 };
 use glow::{self as gl, HasContext};
 use khronos_egl as egl;
+#[allow(unused_imports)]
 use std::{ffi::c_void, ptr};
 use wgpu::{
     Device, Extent3d, Instance, Queue, Texture, TextureDescriptor, TextureDimension, TextureFormat,
@@ -49,7 +52,8 @@ pub fn check_error(gl: &gl::Context, message_context: &str) {
 
 macro_rules! ck {
     ($gl_ctx:ident.$($gl_cmd:tt)*) => {{
-        let res = $gl_ctx.$($gl_cmd)*;
+        #[allow(unused_unsafe)]
+        let res = unsafe { $gl_ctx.$($gl_cmd)* };
 
         #[cfg(debug_assertions)]
         crate::check_error(&$gl_ctx, &format!("{}:{}: {}", file!(), line!(), stringify!($($gl_cmd)*)));
@@ -204,8 +208,6 @@ pub fn create_gl_swapchain(
 }
 
 pub struct GraphicsContext {
-    _instance: Instance,
-
     #[cfg(not(any(windows, target_os = "macos", target_os = "ios")))]
     adapter: wgpu::Adapter,
 
@@ -221,12 +223,35 @@ pub struct GraphicsContext {
 
     create_image: CreateImageFn,
     destroy_image: DestroyImageFn,
+    #[cfg(target_os = "android")]
     get_native_client_buffer: GetNativeClientBufferFn,
+    #[cfg(target_os = "linux")]
+    dma_buf_cache: alvr_common::parking_lot::Mutex<std::collections::HashMap<u64, egl::EGLImage>>,
     image_target_texture_2d: ImageTargetTexture2DFn,
+    #[cfg(target_os = "linux")]
+    linux_egl: LinuxEglContext,
+    // Keep the display alive until device, queue, adapter and owned context are dropped.
+    _instance: Instance,
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxEglContext {
+    api: egl::DynamicInstance<egl::EGL1_5>,
+    display: egl::Display,
+    context: egl::Context,
+    surface: egl::Surface,
+}
+#[cfg(target_os = "linux")]
+impl Drop for LinuxEglContext {
+    fn drop(&mut self) {
+        let _ = self.api.make_current(self.display, None, None, None);
+        let _ = self.api.destroy_surface(self.display, self.surface);
+        let _ = self.api.destroy_context(self.display, self.context);
+    }
 }
 
 impl GraphicsContext {
-    #[cfg(not(any(windows, target_os = "macos", target_os = "ios")))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos", target_os = "ios")))]
     pub fn new_gl() -> Self {
         use std::mem;
         use wgpu::{
@@ -236,6 +261,7 @@ impl GraphicsContext {
 
         const CREATE_IMAGE_FN_STR: &str = "eglCreateImageKHR";
         const DESTROY_IMAGE_FN_STR: &str = "eglDestroyImageKHR";
+        #[cfg(target_os = "android")]
         const GET_NATIVE_CLIENT_BUFFER_FN_STR: &str = "eglGetNativeClientBufferANDROID";
         const IMAGE_TARGET_TEXTURE_2D_FN_STR: &str = "glEGLImageTargetTexture2DOES";
 
@@ -269,15 +295,18 @@ impl GraphicsContext {
         let egl_display = raw_instance.raw_display();
         let egl_config = raw_instance.egl_config();
 
-        let (
-            egl_context,
-            gl_context,
-            dummy_surface,
-            create_image,
-            destroy_image,
-            get_native_client_buffer,
-            image_target_texture_2d,
-        ) = unsafe {
+        struct EglHalInit {
+            egl_context: egl::Context,
+            gl_context: gl::Context,
+            dummy_surface: egl::Surface,
+            create_image: CreateImageFn,
+            destroy_image: DestroyImageFn,
+            #[cfg(target_os = "android")]
+            get_native_client_buffer: GetNativeClientBufferFn,
+            image_target_texture_2d: ImageTargetTexture2DFn,
+        }
+
+        let hal_init = unsafe {
             adapter.as_hal::<api::Gles, _, _>(|raw_adapter| {
                 let adapter_context = raw_adapter.unwrap().adapter_context();
                 let egl_instance = adapter_context.egl_instance().unwrap();
@@ -313,20 +342,22 @@ impl GraphicsContext {
                 let create_image: CreateImageFn = mem::transmute(get_fn_ptr(CREATE_IMAGE_FN_STR));
                 let destroy_image: DestroyImageFn =
                     mem::transmute(get_fn_ptr(DESTROY_IMAGE_FN_STR));
+                #[cfg(target_os = "android")]
                 let get_native_client_buffer: GetNativeClientBufferFn =
                     mem::transmute(get_fn_ptr(GET_NATIVE_CLIENT_BUFFER_FN_STR));
                 let image_target_texture_2d: ImageTargetTexture2DFn =
                     mem::transmute(get_fn_ptr(IMAGE_TARGET_TEXTURE_2D_FN_STR));
 
-                (
+                EglHalInit {
                     egl_context,
                     gl_context,
                     dummy_surface,
                     create_image,
                     destroy_image,
+                    #[cfg(target_os = "android")]
                     get_native_client_buffer,
                     image_target_texture_2d,
-                )
+                }
             })
         };
 
@@ -337,13 +368,62 @@ impl GraphicsContext {
             queue,
             egl_display,
             egl_config,
-            egl_context,
-            gl_context,
-            dummy_surface,
-            create_image,
-            destroy_image,
-            get_native_client_buffer,
-            image_target_texture_2d,
+            egl_context: hal_init.egl_context,
+            gl_context: hal_init.gl_context,
+            dummy_surface: hal_init.dummy_surface,
+            create_image: hal_init.create_image,
+            destroy_image: hal_init.destroy_image,
+            #[cfg(target_os = "android")]
+            get_native_client_buffer: hal_init.get_native_client_buffer,
+            #[cfg(target_os = "linux")]
+            dma_buf_cache: alvr_common::parking_lot::Mutex::new(std::collections::HashMap::new()),
+            image_target_texture_2d: hal_init.image_target_texture_2d,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn new_gl() -> Self {
+        use wgpu::{Backends, DeviceDescriptor, Features, InstanceDescriptor, Limits, hal::api};
+        // wgpu's default Linux EGL path prefers desktop GL, which cannot sample
+        // GL_TEXTURE_EXTERNAL_OES. Use one explicitly owned GLES context for both
+        // wgpu rendering and OpenXR / DMA-BUF interop.
+        let instance = Instance::new(&InstanceDescriptor { backends: Backends::GL, ..Default::default() });
+        let display = unsafe { instance.as_hal::<api::Gles>() }.unwrap().raw_display();
+        let egl = unsafe { egl::DynamicInstance::<egl::EGL1_5>::load_required() }.unwrap();
+        egl.bind_api(egl::OPENGL_ES_API).unwrap();
+        let config = egl.choose_first_config(display, &[
+            egl::SURFACE_TYPE, egl::PBUFFER_BIT,
+            egl::RENDERABLE_TYPE, egl::OPENGL_ES3_BIT,
+            egl::RED_SIZE, 8, egl::GREEN_SIZE, 8, egl::BLUE_SIZE, 8, egl::NONE,
+        ]).unwrap().expect("No GLES3 EGL config");
+        let context = egl.create_context(display, config, None, &[
+            egl::CONTEXT_MAJOR_VERSION, 3, egl::CONTEXT_MINOR_VERSION, 2, egl::NONE,
+        ]).unwrap();
+        let surface = egl.create_pbuffer_surface(display, config, &[egl::WIDTH,16,egl::HEIGHT,16,egl::NONE]).unwrap();
+        egl.make_current(display, Some(surface), Some(surface), Some(context)).unwrap();
+        let get_proc = |name: &str| egl.get_proc_address(name).map_or(ptr::null(), |p| p as *const c_void);
+        let exposed = unsafe { wgpu::hal::gles::Adapter::new_external(get_proc, Default::default()) }.unwrap();
+        let adapter = unsafe { instance.create_adapter_from_hal::<api::Gles>(exposed) };
+        let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
+            required_features: Features::PUSH_CONSTANTS,
+            required_limits: Limits { max_push_constant_size: MAX_PUSH_CONSTANTS_SIZE, ..adapter.limits() },
+            ..Default::default()
+        })).unwrap();
+        let gl_context = unsafe { gl::Context::from_loader_function(get_proc) };
+        alvr_common::info!("Native graphics: {} / {}", unsafe { gl_context.get_parameter_string(gl::VERSION) }, unsafe { gl_context.get_parameter_string(gl::RENDERER) });
+        let create_image = get_proc("eglCreateImageKHR");
+        let destroy_image = get_proc("eglDestroyImageKHR");
+        let image_target = get_proc("glEGLImageTargetTexture2DOES");
+        assert!(!create_image.is_null() && !destroy_image.is_null() && !image_target.is_null(), "Missing EGL image interop functions");
+        Self {
+            adapter, device, queue, egl_display: display, egl_config: config, egl_context: context,
+            gl_context, dummy_surface: surface,
+            create_image: unsafe { std::mem::transmute::<*const c_void, CreateImageFn>(create_image) },
+            destroy_image: unsafe { std::mem::transmute::<*const c_void, DestroyImageFn>(destroy_image) },
+            image_target_texture_2d: unsafe { std::mem::transmute::<*const c_void, ImageTargetTexture2DFn>(image_target) },
+            dma_buf_cache: alvr_common::parking_lot::Mutex::new(std::collections::HashMap::new()),
+            linux_egl: LinuxEglContext { api: egl, display, context, surface },
+            _instance: instance,
         }
     }
 
@@ -353,7 +433,9 @@ impl GraphicsContext {
     }
 
     pub fn make_current(&self) {
-        #[cfg(not(any(windows, target_os = "macos", target_os = "ios")))]
+        #[cfg(target_os = "linux")]
+        self.linux_egl.api.make_current(self.egl_display, Some(self.dummy_surface), Some(self.dummy_surface), Some(self.egl_context)).unwrap();
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos", target_os = "ios")))]
         unsafe {
             self.adapter
                 .as_hal::<wgpu::hal::api::Gles, _, _>(|raw_adapter| {
@@ -375,6 +457,7 @@ impl GraphicsContext {
         };
     }
 
+    #[cfg(target_os = "android")]
     /// # Safety
     /// `buffer` must be a valid AHardwareBuffer.
     /// `texture` must be a valid GL texture.
@@ -414,6 +497,71 @@ impl GraphicsContext {
 
             unsafe { (self.destroy_image)(self.egl_display.as_ptr(), image) };
             check_error(&self.gl_context, "destroy_image");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    /// # Safety
+    /// `dma_buf` must contain valid file descriptors for imported planes.
+    /// `texture` must be a valid GL texture.
+    pub unsafe fn render_dmabuf_using_texture(
+        &self,
+        dma_buf: &DmaBufImage,
+        texture: gl::Texture,
+        render_cb: impl FnOnce(),
+    ) -> alvr_common::anyhow::Result<()> {
+        if dma_buf.planes.is_empty() {
+            alvr_common::anyhow::bail!("DMA-BUF has no planes");
+        }
+
+        let mut cache = self.dma_buf_cache.lock();
+        let image = if let Some(&img) = cache.get(&dma_buf.buffer_id) {
+            img
+        } else {
+            let attribs = build_egl_dma_buf_attribs(dma_buf);
+            let img = unsafe {
+                (self.create_image)(
+                    self.egl_display.as_ptr(),
+                    egl::NO_CONTEXT,
+                    EGL_LINUX_DMA_BUF_EXT,
+                    ptr::null_mut(),
+                    attribs.as_ptr(),
+                )
+            };
+            if img.is_null() {
+                alvr_common::anyhow::bail!("eglCreateImageKHR failed for DMA-BUF {}", dma_buf.buffer_id);
+            }
+            cache.insert(dma_buf.buffer_id, img);
+            img
+        };
+
+        unsafe {
+            self.gl_context
+                .bind_texture(GL_TEXTURE_EXTERNAL_OES, Some(texture))
+        };
+        check_error(&self.gl_context, "bind texture OES");
+
+        unsafe { (self.image_target_texture_2d)(GL_TEXTURE_EXTERNAL_OES, image) };
+        check_error(&self.gl_context, "image_target_texture_2d");
+
+        unsafe {
+            self.gl_context.tex_parameter_i32(GL_TEXTURE_EXTERNAL_OES, gl::TEXTURE_MIN_FILTER, gl::LINEAR as _);
+            self.gl_context.tex_parameter_i32(GL_TEXTURE_EXTERNAL_OES, gl::TEXTURE_MAG_FILTER, gl::LINEAR as _);
+            self.gl_context.tex_parameter_i32(GL_TEXTURE_EXTERNAL_OES, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
+            self.gl_context.tex_parameter_i32(GL_TEXTURE_EXTERNAL_OES, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as _);
+        }
+        render_cb();
+        // Conservative synchronization until native fences are validated on Steam Frame.
+        // The frame lease must not requeue the buffer while the GPU still samples it.
+        unsafe { self.gl_context.finish() };
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn clear_dma_buf_cache(&self) {
+        let mut cache = self.dma_buf_cache.lock();
+        for (_, img) in cache.drain() {
+            unsafe { (self.destroy_image)(self.egl_display.as_ptr(), img) };
         }
     }
 }

@@ -233,6 +233,7 @@ pub extern "C" fn alvr_initialize(capabilities: AlvrClientCapabilities) {
         prefer_10bit: capabilities.prefer_10bit,
         preferred_encoding_gamma: capabilities.preferred_encoding_gamma,
         prefer_hdr: capabilities.prefer_hdr,
+        frameconnect: None,
     };
 
     *CLIENT_CORE_CONTEXT.lock() = Some(ClientCoreContext::new(capabilities, vec![]));
@@ -684,6 +685,7 @@ pub extern "C" fn alvr_resume_opengl(
         UVec2::new(preferred_view_width, preferred_view_height),
         convert_swapchain_array(swapchain_textures, swapchain_length),
         "",
+        alvr_graphics::SDR_FORMAT,
     )));
 }
 
@@ -784,7 +786,7 @@ pub extern "C" fn alvr_render_lobby_opengl(
 /// The centers must be encoder-aligned. They are copied; the pointer is not retained.
 #[unsafe(no_mangle)]
 pub extern "C" fn alvr_render_stream_opengl(
-    hardware_buffer: *mut c_void,
+    #[allow(unused_variables)] hardware_buffer: *mut c_void,
     view_params: *const AlvrStreamViewParams,
     foveation_center_shifts: *const [[f32; 2]; 2],
 ) {
@@ -792,8 +794,14 @@ pub extern "C" fn alvr_render_stream_opengl(
         if let Some(renderer) = renderer {
             let left_params = unsafe { &*view_params };
             let right_params = unsafe { &*view_params.offset(1) };
+            #[cfg(target_os = "android")]
+            let frame = (!hardware_buffer.is_null())
+                .then(|| alvr_graphics::VideoFrame::HardwareBuffer(hardware_buffer));
+            #[cfg(not(target_os = "android"))]
+            let frame = None::<alvr_graphics::VideoFrame>;
+
             renderer.render(
-                hardware_buffer,
+                frame.as_ref(),
                 [
                     StreamViewParams {
                         swapchain_index: left_params.swapchain_index,
@@ -880,6 +888,9 @@ pub struct AlvrDecoderConfig {
 #[unsafe(no_mangle)]
 pub extern "C" fn alvr_create_decoder(config: AlvrDecoderConfig) {
     let config = VideoDecoderConfig {
+        decoder_name: None,
+        encoded_width: 0,
+        encoded_height: 0,
         codec: match config.codec {
             AlvrCodecType::H264 => CodecType::H264,
             AlvrCodecType::Hevc => CodecType::Hevc,
@@ -928,15 +939,22 @@ pub extern "C" fn alvr_create_decoder(config: AlvrDecoderConfig) {
         },
     };
 
-    let (mut sink, source) =
-        video_decoder::create_decoder(config, |maybe_timestamp: Result<Duration>| {
-            if let Some(context) = &*CLIENT_CORE_CONTEXT.lock() {
-                match maybe_timestamp {
-                    Ok(timestamp) => context.report_frame_decoded(timestamp),
-                    Err(e) => context.report_fatal_decoder_error(&e.to_string()),
-                }
+    let result = video_decoder::create_decoder(config, |maybe_timestamp: Result<Duration>| {
+        if let Some(context) = &*CLIENT_CORE_CONTEXT.lock() {
+            match maybe_timestamp {
+                Ok(timestamp) => context.report_frame_decoded(timestamp),
+                Err(e) => context.report_fatal_decoder_error(&e.to_string()),
             }
-        });
+        }
+    });
+
+    let (mut sink, source) = match result {
+        Ok(pair) => pair,
+        Err(e) => {
+            error!("Decoder initialization failed: {e}");
+            return;
+        }
+    };
 
     *DECODER_SOURCE.lock() = Some(source);
 
@@ -959,17 +977,22 @@ pub extern "C" fn alvr_get_frame(
     out_buffer_ptr: *mut *mut c_void,
 ) -> bool {
     if let Some(source) = &mut *DECODER_SOURCE.lock()
-        && let Some((timestamp, buffer_ptr)) = source.get_frame()
+        && let Some((timestamp, frame)) = source.get_frame()
     {
-        unsafe {
-            *out_timestamp_ns = timestamp.as_nanos() as u64;
-            *out_buffer_ptr = buffer_ptr;
+        #[cfg(target_os = "android")]
+        if let alvr_graphics::VideoFrame::HardwareBuffer(buffer_ptr) = frame {
+            unsafe {
+                *out_timestamp_ns = timestamp.as_nanos() as u64;
+                *out_buffer_ptr = buffer_ptr;
+            }
+            return true;
         }
-
-        true
-    } else {
-        false
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = (timestamp, frame, out_timestamp_ns, out_buffer_ptr);
+        }
     }
+    false
 }
 
 #[unsafe(no_mangle)]

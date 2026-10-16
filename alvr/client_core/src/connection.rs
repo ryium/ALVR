@@ -37,7 +37,7 @@ use alvr_audio as audio;
 
 const INITIAL_MESSAGE: &str = concat!(
     "Searching for streamer...\n",
-    "Open ALVR on your PC then click \"Trust\"\n",
+    "Open FrameConnect on your PC and register\n",
     "next to the device entry",
 );
 const SUCCESS_CONNECT_MESSAGE: &str = "Successful connection!\nPlease wait...";
@@ -71,7 +71,7 @@ pub struct ConnectionContext {
 
 fn set_hud_message(event_queue: &Mutex<VecDeque<ClientCoreEvent>>, message: &str) {
     let message = format!(
-        "ALVR v{}\nhostname: {}\nIP: {}\n\n{message}",
+        "FrameConnect (ALVR {})\nhostname: {}\nIP: {}\n\n{message}",
         *ALVR_VERSION,
         Config::load().hostname,
         alvr_system_info::local_ip(),
@@ -87,19 +87,43 @@ fn is_streaming(ctx: &ConnectionContext) -> bool {
 }
 
 pub fn connection_lifecycle_loop(
-    capabilities: ClientCapabilities,
+    capabilities: Arc<RwLock<ClientCapabilities>>,
     ctx: Arc<ConnectionContext>,
     lifecycle_state: Arc<RwLock<LifecycleState>>,
     event_queue: Arc<Mutex<VecDeque<ClientCoreEvent>>>,
 ) {
     dbg_connection!("connection_lifecycle_loop: Begin");
 
-    set_hud_message(&event_queue, INITIAL_MESSAGE);
+    let decoder_unavailable = capabilities
+        .read()
+        .frameconnect
+        .as_ref()
+        .is_some_and(|caps| {
+            caps.probe_error.is_some()
+                || !caps
+                    .decoders
+                    .iter()
+                    .any(|decoder| !decoder.modes.is_empty())
+        });
+    let initial_message = if decoder_unavailable {
+        "No usable AV1/HEVC hardware decoder\nwas reported by this runtime.\nStreaming is unavailable.\nCheck FrameConnect diagnostics on PC."
+    } else {
+        INITIAL_MESSAGE
+    };
+    set_hud_message(&event_queue, initial_message);
+    if decoder_unavailable {
+        error!("{initial_message}");
+    }
 
     while *lifecycle_state.read() != LifecycleState::ShuttingDown {
+        if decoder_unavailable {
+            thread::sleep(CONNECTION_RETRY_INTERVAL);
+            continue;
+        }
         if *lifecycle_state.read() == LifecycleState::Resumed {
+            let capabilities_snapshot = capabilities.read().clone();
             if let Err(e) = connection_pipeline(
-                capabilities.clone(),
+                capabilities_snapshot,
                 Arc::clone(&ctx),
                 Arc::clone(&lifecycle_state),
                 Arc::clone(&event_queue),
@@ -158,8 +182,8 @@ fn connection_pipeline(
     *connection_state_lock = ConnectionState::Connecting;
 
     // TODO: Don't fetch cpal sample rate, get directly from AAudio
-    let microphone_sample_rate =
-        alvr_audio::input_sample_rate(&alvr_audio::new_input(None).to_con()?).to_con()?;
+    // v1 does not stream microphone input; no microphone permission is required.
+    let microphone_sample_rate = 48000;
 
     dbg_connection!("connection_pipeline: Send stream capabilities");
     proto_control_socket
@@ -183,7 +207,9 @@ fn connection_pipeline(
                         prefer_hdr: capabilities.prefer_hdr,
                         ext_str: String::new(),
                     }
-                    .with_ext(VideoStreamingCapabilitiesExt {}),
+                    .with_ext(VideoStreamingCapabilitiesExt {
+                        frameconnect: capabilities.frameconnect,
+                    }),
                 ),
             },
         )))
@@ -427,7 +453,7 @@ fn connection_pipeline(
         move || {
             let mut keepalive_deadline = Instant::now();
 
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "linux"))]
             let mut battery_deadline = Instant::now();
 
             while is_streaming(&ctx) && *lifecycle_state.read() == LifecycleState::Resumed {
@@ -449,7 +475,7 @@ fn connection_pipeline(
                     keepalive_deadline = Instant::now() + KEEPALIVE_INTERVAL;
                 }
 
-                #[cfg(target_os = "android")]
+                #[cfg(any(target_os = "android", target_os = "linux"))]
                 if Instant::now() > battery_deadline {
                     let (gauge_value, is_plugged) = alvr_system_info::get_battery_status();
                     if let Some(sender) = &mut *ctx.control_sender.lock() {

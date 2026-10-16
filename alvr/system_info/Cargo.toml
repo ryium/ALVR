@@ -10,6 +10,7 @@ license.workspace = true
 alvr_common.workspace = true
 
 jni = "0.22"
+libc = "0.2"
 local-ip-address = "0.6"
 serde = { version = "1", features = ["derive"] }
 settings-schema = { git = "https://github.com/alvr-org/settings-schema-rs", rev = "676185f" }

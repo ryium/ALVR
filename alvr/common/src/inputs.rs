@@ -25,6 +25,10 @@ interaction_profile!(PICO_G3, "bytedance/pico_g3");
 interaction_profile!(PSVR2, "sony/playstation_vr2_sense");
 interaction_profile!(FOCUS3, "htc/vive_focus3");
 interaction_profile!(YVR, "yvr/touch");
+pub const FRAME_CONTROLLER_PROFILE_PATH: &str =
+    "/interaction_profiles/valve/frame_controller_valve";
+pub static FRAME_CONTROLLER_PROFILE_ID: LazyLock<u64> =
+    LazyLock::new(|| hash_string(FRAME_CONTROLLER_PROFILE_PATH));
 
 macro_rules! devices {
     ($(($name:ident, $path:expr),)*) => {
@@ -150,6 +154,18 @@ controller_inputs! {
     (TRACKPAD_FORCE, "trackpad/force", Scalar),
     (TRACKPAD_TOUCH, "trackpad/touch", Binary),
     (THUMBREST_TOUCH, "thumbrest/touch", Binary),
+    (VIEW_CLICK, "view/click", Binary),
+    (VIEW_TOUCH, "view/touch", Binary),
+    (DPAD_UP_CLICK, "dpad_up/click", Binary),
+    (DPAD_UP_TOUCH, "dpad_up/touch", Binary),
+    (DPAD_DOWN_CLICK, "dpad_down/click", Binary),
+    (DPAD_DOWN_TOUCH, "dpad_down/touch", Binary),
+    (DPAD_LEFT_CLICK, "dpad_left/click", Binary),
+    (DPAD_LEFT_TOUCH, "dpad_left/touch", Binary),
+    (DPAD_RIGHT_CLICK, "dpad_right/click", Binary),
+    (DPAD_RIGHT_TOUCH, "dpad_right/touch", Binary),
+    (BUMPER_CLICK, "bumper/click", Binary),
+    (BUMPER_TOUCH, "bumper/touch", Binary),
 }
 
 pub struct InteractionProfileInfo {
@@ -539,6 +555,60 @@ pub static CONTROLLER_PROFILE_INFO: LazyLock<HashMap<u64, InteractionProfileInfo
                         *RIGHT_THUMBSTICK_CLICK_ID,
                         *RIGHT_THUMBSTICK_TOUCH_ID,
                         *RIGHT_THUMBREST_TOUCH_ID, // might not actually be present?
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            ),
+            (
+                *FRAME_CONTROLLER_PROFILE_ID,
+                InteractionProfileInfo {
+                    path: FRAME_CONTROLLER_PROFILE_PATH,
+                    button_set: [
+                        *LEFT_VIEW_CLICK_ID,
+                        *LEFT_VIEW_TOUCH_ID,
+                        *LEFT_DPAD_UP_CLICK_ID,
+                        *LEFT_DPAD_UP_TOUCH_ID,
+                        *LEFT_DPAD_DOWN_CLICK_ID,
+                        *LEFT_DPAD_DOWN_TOUCH_ID,
+                        *LEFT_DPAD_LEFT_CLICK_ID,
+                        *LEFT_DPAD_LEFT_TOUCH_ID,
+                        *LEFT_DPAD_RIGHT_CLICK_ID,
+                        *LEFT_DPAD_RIGHT_TOUCH_ID,
+                        *LEFT_BUMPER_CLICK_ID,
+                        *LEFT_BUMPER_TOUCH_ID,
+                        *LEFT_TRIGGER_CLICK_ID,
+                        *LEFT_TRIGGER_VALUE_ID,
+                        *LEFT_TRIGGER_TOUCH_ID,
+                        *LEFT_SQUEEZE_CLICK_ID,
+                        *LEFT_SQUEEZE_VALUE_ID,
+                        *LEFT_SQUEEZE_TOUCH_ID,
+                        *LEFT_THUMBSTICK_X_ID,
+                        *LEFT_THUMBSTICK_Y_ID,
+                        *LEFT_THUMBSTICK_CLICK_ID,
+                        *LEFT_THUMBSTICK_TOUCH_ID,
+                        *RIGHT_MENU_CLICK_ID,
+                        *RIGHT_MENU_TOUCH_ID,
+                        *RIGHT_A_CLICK_ID,
+                        *RIGHT_A_TOUCH_ID,
+                        *RIGHT_B_CLICK_ID,
+                        *RIGHT_B_TOUCH_ID,
+                        *RIGHT_X_CLICK_ID,
+                        *RIGHT_X_TOUCH_ID,
+                        *RIGHT_Y_CLICK_ID,
+                        *RIGHT_Y_TOUCH_ID,
+                        *RIGHT_BUMPER_CLICK_ID,
+                        *RIGHT_BUMPER_TOUCH_ID,
+                        *RIGHT_TRIGGER_CLICK_ID,
+                        *RIGHT_TRIGGER_VALUE_ID,
+                        *RIGHT_TRIGGER_TOUCH_ID,
+                        *RIGHT_SQUEEZE_CLICK_ID,
+                        *RIGHT_SQUEEZE_VALUE_ID,
+                        *RIGHT_SQUEEZE_TOUCH_ID,
+                        *RIGHT_THUMBSTICK_X_ID,
+                        *RIGHT_THUMBSTICK_Y_ID,
+                        *RIGHT_THUMBSTICK_CLICK_ID,
+                        *RIGHT_THUMBSTICK_TOUCH_ID,
                     ]
                     .into_iter()
                     .collect(),

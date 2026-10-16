@@ -1,0 +1,26 @@
+[package]
+name = "alvr_client_steamos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "frameconnect"
+path = "src/main.rs"
+
+[dependencies]
+alvr_client_core.workspace = true
+alvr_client_openxr = { path = "../client_openxr" }
+alvr_common.workspace = true
+alvr_graphics.workspace = true
+alvr_session.workspace = true
+alvr_system_info.workspace = true
+glow = "0.16"
+cpal = "0.16"
+khronos-egl = "6"
+libc = "0.2"
+openxr = "0.21"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -230,6 +230,7 @@ dependencies = [
  "android_logger",
  "app_dirs2",
  "env_logger",
+ "libc",
  "mdns-sd",
  "ndk",
  "ndk-context",
@@ -267,6 +268,25 @@ dependencies = [
  "libc",
  "ndk-context",
  "openxr",
+]
+
+[[package]]
+name = "alvr_client_steamos"
+version = "21.0.0-dev14"
+dependencies = [
+ "alvr_client_core",
+ "alvr_client_openxr",
+ "alvr_common",
+ "alvr_graphics",
+ "alvr_session",
+ "alvr_system_info",
+ "cpal",
+ "glow 0.16.0",
+ "khronos-egl",
+ "libc",
+ "openxr",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -485,6 +505,7 @@ version = "21.0.0-dev14"
 dependencies = [
  "alvr_common",
  "jni 0.22.4",
+ "libc",
  "local-ip-address",
  "ndk",
  "ndk-context",

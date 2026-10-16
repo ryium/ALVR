@@ -1,6 +1,6 @@
 mod c_api;
 mod extra_extensions;
-mod graphics;
+pub mod graphics;
 mod interaction;
 mod lobby;
 mod passthrough;
@@ -8,8 +8,9 @@ mod stream;
 
 use crate::stream::ParsedStreamConfig;
 use alvr_client_core::{ClientCapabilities, ClientCoreContext, ClientCoreEvent};
+use graphics::ClientGraphics;
 use alvr_common::{
-    Fov, HAND_LEFT_ID, Pose, debug, error,
+    Fov, HAND_LEFT_ID, Pose, debug, error, warn,
     glam::{Quat, UVec2, Vec3},
     info,
     parking_lot::RwLock,
@@ -104,7 +105,7 @@ fn to_perf_settings_level(level: PerformanceLevel) -> xr::PerfSettingsLevelEXT {
 
 fn set_performance_level(
     xr_instance: &xr::Instance,
-    xr_session: &xr::Session<xr::OpenGlEs>,
+    xr_session: &xr::Session<ClientGraphics>,
     domain: xr::PerfSettingsDomainEXT,
     level: PerformanceLevel,
 ) {
@@ -145,9 +146,9 @@ fn create_session(
     xr_system: xr::SystemId,
     graphics_context: &GraphicsContext,
 ) -> (
-    xr::Session<xr::OpenGlEs>,
+    xr::Session<ClientGraphics>,
     xr::FrameWaiter,
-    xr::FrameStream<xr::OpenGlEs>,
+    xr::FrameStream<ClientGraphics>,
 ) {
     #[allow(unreachable_code)]
     unsafe {
@@ -159,6 +160,13 @@ fn create_session(
 
 pub fn entry_point() {
     alvr_client_core::init_logging();
+
+    // Keep decoder diagnostics available even when the XR runtime cannot start a session.
+    #[cfg(target_os = "android")]
+    let decoder_capabilities =
+        alvr_system_info::decoder_probe::probe(&alvr_system_info::android::vm());
+    #[cfg(target_os = "android")]
+    info!("FrameConnect hardware decoder probe: {decoder_capabilities:#?}");
 
     const LEGACY_OPENXR_VERSION: xr::Version = xr::Version::new(1, 0, 34);
     const CURRENT_OPENXR_VERSION: xr::Version = xr::Version::new(1, 1, 36);
@@ -192,8 +200,16 @@ pub fn entry_point() {
             .collect::<Vec<_>>()
     );
 
-    // todo: switch to vulkan
+    let has_egl_mndx = available_exts.mndx_egl_enable;
+    info!("OpenXR XR_MNDX_egl_enable available: {has_egl_mndx}");
+
+    #[cfg(target_os = "android")]
     assert!(available_exts.khr_opengl_es_enable);
+    #[cfg(not(target_os = "android"))]
+    assert!(
+        available_exts.khr_opengl_es_enable && has_egl_mndx,
+        "Linux EGL requires XR_KHR_opengl_es_enable and XR_MNDX_egl_enable"
+    );
 
     let mut selected_exts = xr::ExtensionSet::default();
     selected_exts.bd_body_tracking = true;
@@ -223,6 +239,8 @@ pub fn entry_point() {
     }
     selected_exts.khr_convert_timespec_time = true;
     selected_exts.khr_opengl_es_enable = true;
+    #[cfg(target_os = "linux")]
+    { selected_exts.mndx_egl_enable = true; }
     selected_exts.meta_body_tracking_full_body = true;
     selected_exts.meta_simultaneous_hands_and_controllers = true;
     selected_exts.meta_detached_controllers = true;
@@ -230,12 +248,28 @@ pub fn entry_point() {
         META_BODY_TRACKING_FIDELITY_EXTENSION_NAME,
         BD_MOTION_TRACKING_EXTENSION_NAME,
         PICO_CONFIGURATION_EXTENSION_NAME,
+        "XR_VALVE_frame_controller_interaction",
     ]
     .into_iter()
-    .map(|s| s.as_bytes().to_vec())
+    .flat_map(|s| {
+        let mut with_nul = s.as_bytes().to_vec();
+        with_nul.push(0);
+        let without_nul = s.as_bytes().to_vec();
+        [with_nul, without_nul]
+    })
     .collect();
 
     selected_exts = selected_exts.intersection(&available_exts);
+    selected_exts.other = selected_exts
+        .other
+        .into_iter()
+        .map(|mut v| {
+            if !v.ends_with(b"\0") {
+                v.push(0);
+            }
+            v
+        })
+        .collect();
 
     let available_layers = xr_entry.enumerate_layers().unwrap();
     info!("OpenXR available layers: {available_layers:#?}");
@@ -252,19 +286,29 @@ pub fn entry_point() {
         })
         .collect::<Vec<_>>();
 
-    let xr_instance = xr_entry
-        .create_instance(
+    let create_instance = |api_version| {
+        xr_entry.create_instance(
             &xr::ApplicationInfo {
-                application_name: "ALVR Client",
+                application_name: "FrameConnect",
                 application_version: 0,
                 engine_name: "ALVR",
                 engine_version: 0,
-                api_version: openxr_version,
+                api_version,
             },
             &selected_exts,
             &[],
         )
-        .unwrap();
+    };
+    let xr_instance = match create_instance(openxr_version) {
+        Err(xr::sys::Result::ERROR_API_VERSION_UNSUPPORTED)
+            if openxr_version != LEGACY_OPENXR_VERSION =>
+        {
+            info!("OpenXR runtime rejected {openxr_version}; retrying compatible 1.0 API");
+            create_instance(LEGACY_OPENXR_VERSION)
+        }
+        result => result,
+    }
+    .expect("FrameConnect could not create an OpenXR instance");
 
     let platform = alvr_system_info::platform(
         xr_instance
@@ -288,7 +332,7 @@ pub fn entry_point() {
 
         // mandatory call
         let _ = xr_instance
-            .graphics_requirements::<xr::OpenGlEs>(xr_system)
+            .graphics_requirements::<ClientGraphics>(xr_system)
             .unwrap();
 
         let (xr_session, mut xr_frame_waiter, mut xr_frame_stream) =
@@ -317,6 +361,9 @@ pub fn entry_point() {
         } else {
             vec![90.0]
         };
+        info!(
+            "FrameConnect display: rates={refresh_rates:?}, recommended={default_view_resolution:?}, maximum={max_view_resolution:?}"
+        );
 
         if selected_exts.fb_color_space {
             xr_session
@@ -324,6 +371,22 @@ pub fn entry_point() {
                 .unwrap();
         }
 
+        #[cfg(target_os = "android")]
+        let mut frameconnect = decoder_capabilities.clone();
+        #[cfg(target_os = "linux")]
+        let mut frameconnect = alvr_system_info::v4l2_probe::probe_v4l2(&refresh_rates);
+        #[cfg(not(any(target_os = "android", target_os = "linux")))]
+        let mut frameconnect = alvr_common::frameconnect::FrameConnectCapabilities {
+            version: alvr_common::frameconnect::CAPABILITY_VERSION,
+            probe_error: Some("Native hardware decoder backend has not been validated".into()),
+            ..Default::default()
+        };
+        frameconnect.can_request_refresh_rate = selected_exts.fb_display_refresh_rate;
+        frameconnect.eye_gaze =
+            extra_extensions::supports_eye_gaze_interaction(&xr_session, xr_system);
+        info!(
+            "FrameConnect decoder capabilities (driver declarations, not benchmark results): {frameconnect:#?}"
+        );
         let capabilities = ClientCapabilities {
             platform,
             default_view_resolution,
@@ -331,14 +394,15 @@ pub fn entry_point() {
             refresh_rates,
             foveated_encoding: platform != Platform::Unknown,
             encoder_high_profile: platform != Platform::Unknown,
-            encoder_10_bits: platform != Platform::Unknown,
-            encoder_av1: matches!(
-                platform,
-                Platform::Quest3 | Platform::Quest3S | Platform::Pico4Ultra
-            ),
+            encoder_10_bits: frameconnect.decoders.iter().any(|d| d.ten_bit),
+            encoder_av1: frameconnect
+                .decoders
+                .iter()
+                .any(|d| d.mime == "video/av01" && !d.modes.is_empty()),
             prefer_10bit: false,
             preferred_encoding_gamma: 1.0,
             prefer_hdr: false,
+            frameconnect: Some(frameconnect),
         };
 
         let permissions = {
@@ -407,6 +471,7 @@ pub fn entry_point() {
             .select_sources(&lobby_interaction_sources);
 
         let mut session_running = false;
+        let mut core_resumed = false;
         let mut stream_context = None::<StreamContext>;
         let mut passthrough_layer = None;
 
@@ -425,7 +490,7 @@ pub fn entry_point() {
                                 .begin(xr::ViewConfigurationType::PRIMARY_STEREO)
                                 .unwrap();
 
-                            core_context.resume();
+                            core_resumed = false;
 
                             passthrough_layer = PassthroughLayer::new(&xr_session, platform).ok();
 
@@ -433,6 +498,7 @@ pub fn entry_point() {
                         }
                         xr::SessionState::STOPPING => {
                             session_running = false;
+                            core_resumed = false;
 
                             passthrough_layer = None;
 
@@ -493,6 +559,18 @@ pub fn entry_point() {
                     }
                     ClientCoreEvent::StreamingStarted(config) => {
                         let config = ParsedStreamConfig::new(&config);
+                        if xr_session
+                            .instance()
+                            .exts()
+                            .fb_display_refresh_rate
+                            .is_some()
+                            && let Err(error) =
+                                xr_session.request_display_refresh_rate(config.refresh_rate_hint)
+                        {
+                            warn!(
+                                "Display refresh rate request failed ({error}); continuing with current display cadence"
+                            );
+                        }
 
                         let context = StreamContext::new(
                             Arc::clone(&core_context),
@@ -588,6 +666,13 @@ pub fn entry_point() {
             };
             let frame_interval =
                 Duration::from_nanos(frame_state.predicted_display_period.as_nanos() as _);
+            if !core_resumed {
+                if !selected_exts.fb_display_refresh_rate {
+                    core_context.set_observed_refresh_rate(1.0 / frame_interval.as_secs_f32());
+                }
+                core_context.resume();
+                core_resumed = true;
+            }
             let vsync_time =
                 Duration::from_nanos(frame_state.predicted_display_time.as_nanos() as _);
 
@@ -619,26 +704,21 @@ pub fn entry_point() {
                     &[&layer.build()]
                 };
 
+            let end_time = if cfg!(target_os = "android") && !platform.is_vive() {
+                to_xr_time(display_time)
+            } else {
+                frame_state.predicted_display_time
+            };
+
             graphics_context.make_current();
             let res = xr_frame_stream.end(
-                to_xr_time(display_time),
+                end_time,
                 xr::EnvironmentBlendMode::OPAQUE,
                 layers,
             );
 
             if let Err(e) = res {
-                let time = to_xr_time(display_time);
-                error!("End frame failed! {e}, timestamp: {display_time:?}, time: {time:?}");
-
-                if !platform.is_vive() {
-                    xr_frame_stream
-                        .end(
-                            frame_state.predicted_display_time,
-                            xr::EnvironmentBlendMode::OPAQUE,
-                            &[],
-                        )
-                        .unwrap();
-                }
+                error!("End frame failed! {e}, time: {end_time:?}");
             }
         }
     }
@@ -648,6 +728,10 @@ pub fn entry_point() {
 
 #[allow(unused)]
 fn xr_runtime_now(xr_instance: &xr::Instance) -> Option<xr::Time> {
+    // openxr::Instance::now() panics when the optional conversion extension is absent.
+    // Lobby callers can use their runtime-provided predicted display time instead.
+    #[cfg(not(target_os = "windows"))]
+    let _ = xr_instance.exts().khr_convert_timespec_time?;
     xr_instance
         .now()
         .ok()

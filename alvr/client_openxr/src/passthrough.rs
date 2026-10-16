@@ -1,4 +1,7 @@
-use crate::extra_extensions::{PassthroughFB, PassthroughHTC};
+use crate::{
+    extra_extensions::{PassthroughFB, PassthroughHTC},
+    graphics::ClientGraphics,
+};
 use alvr_common::anyhow::{Result, bail};
 use alvr_system_info::Platform;
 use openxr::{self as xr};
@@ -11,7 +14,7 @@ pub struct PassthroughLayer<'a> {
 }
 
 impl PassthroughLayer<'_> {
-    pub fn new(session: &xr::Session<xr::OpenGlEs>, platform: Platform) -> Result<Self> {
+    pub fn new(session: &xr::Session<ClientGraphics>, platform: Platform) -> Result<Self> {
         let mut handle_fb = None;
         let mut handle_htc = None;
 
@@ -33,7 +36,7 @@ impl PassthroughLayer<'_> {
 }
 
 impl<'a> Deref for PassthroughLayer<'a> {
-    type Target = xr::CompositionLayerBase<'a, xr::OpenGlEs>;
+    type Target = xr::CompositionLayerBase<'a, ClientGraphics>;
 
     fn deref(&self) -> &Self::Target {
         if let Some(handle) = &self.handle_fb {

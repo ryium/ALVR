@@ -4,6 +4,7 @@ use crate::{
         self, BodyTrackerBD, BodyTrackerFB, EyeTrackerSocial, FaceTracker2FB, FaceTrackerBD,
         FacialTrackerHTC, MotionTrackerBD, MultimodalMeta,
     },
+    graphics::ClientGraphics,
 };
 use alvr_common::{
     glam::{Quat, Vec3},
@@ -20,6 +21,27 @@ use std::{
 use xr::SpaceLocationFlags;
 
 const IPD_CHANGE_EPS: f32 = 0.001;
+const DEFAULT_FOV_OVERDRAW_RATIO: f32 = 1.10;
+
+pub fn get_fov_overdraw_ratio() -> f32 {
+    std::env::var("FRAMECONNECT_FOV_OVERDRAW")
+        .ok()
+        .and_then(|val| val.parse::<f32>().ok())
+        .unwrap_or(DEFAULT_FOV_OVERDRAW_RATIO)
+        .clamp(1.0, 1.30)
+}
+
+pub fn scale_fov(fov: Fov, ratio: f32) -> Fov {
+    if (ratio - 1.0).abs() < 1e-4 {
+        return fov;
+    }
+    Fov {
+        left: (fov.left.tan() * ratio).atan(),
+        right: (fov.right.tan() * ratio).atan(),
+        up: (fov.up.tan() * ratio).atan(),
+        down: (fov.down.tan() * ratio).atan(),
+    }
+}
 
 // Most OpenXR runtime, including Meta's one, do not follow perfectly the specification regarding
 // controller pose. The Z axis should point down through the center of the controller grip, the X
@@ -174,7 +196,7 @@ impl InteractionSourcesConfig {
 }
 
 pub struct InteractionContext {
-    xr_session: xr::Session<xr::OpenGlEs>,
+    xr_session: xr::Session<ClientGraphics>,
     xr_system: xr::SystemId,
     extra_extensions: Vec<String>,
     platform: Platform,
@@ -189,7 +211,7 @@ pub struct InteractionContext {
 
 impl InteractionContext {
     pub fn new(
-        xr_session: xr::Session<xr::OpenGlEs>,
+        xr_session: xr::Session<ClientGraphics>,
         extra_extensions: Vec<String>,
         xr_system: xr::SystemId,
         platform: Platform,
@@ -217,6 +239,7 @@ impl InteractionContext {
             p if p.is_pico() => PICO4S_CONTROLLER_PROFILE_PATH,
             p if p.is_vive() => FOCUS3_CONTROLLER_PROFILE_PATH,
             p if p.is_yvr() => YVR_CONTROLLER_PROFILE_PATH,
+            Platform::SteamFrame => FRAME_CONTROLLER_PROFILE_PATH,
             _ => QUEST_CONTROLLER_PROFILE_PATH,
         };
         let controllers_profile_id = alvr_common::hash_string(controllers_profile_path);
@@ -350,14 +373,56 @@ impl InteractionContext {
         }
 
         // Apply bindings:
-        xr_instance
-            .suggest_interaction_profile_bindings(
-                xr_instance
-                    .string_to_path(controllers_profile_path)
-                    .unwrap(),
-                &bindings,
-            )
-            .unwrap();
+        let suggest_for_profile = |profile_str: &str| -> bool {
+            if let Ok(profile_path) = xr_instance.string_to_path(profile_str) {
+                match xr_instance.suggest_interaction_profile_bindings(profile_path, &bindings) {
+                    Ok(_) => {
+                        info!("Successfully suggested full bindings for {profile_str}");
+                        return true;
+                    }
+                    Err(e) => {
+                        warn!("Full bindings rejected for {profile_str}: {e:?}, testing individual bindings");
+                        let mut valid = Vec::new();
+                        for b in &bindings {
+                            if xr_instance
+                                .suggest_interaction_profile_bindings(profile_path, std::slice::from_ref(b))
+                                .is_ok()
+                            {
+                                valid.push(*b);
+                            }
+                        }
+                        if !valid.is_empty() {
+                            if let Ok(_) = xr_instance.suggest_interaction_profile_bindings(profile_path, &valid) {
+                                info!(
+                                    "Successfully suggested {}/{} bindings for {profile_str}",
+                                    valid.len(),
+                                    bindings.len()
+                                );
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        };
+
+        if !suggest_for_profile(controllers_profile_path) {
+            warn!("Failed to bind primary profile {controllers_profile_path}");
+            if platform == Platform::SteamFrame {
+                for fallback in [
+                    "/interaction_profiles/valve/frame_controller_valve",
+                    "/interaction_profiles/valve/frame_controller",
+                    INDEX_CONTROLLER_PROFILE_PATH,
+                    QUEST_CONTROLLER_PROFILE_PATH,
+                ] {
+                    if fallback != controllers_profile_path && suggest_for_profile(fallback) {
+                        info!("Successfully bound fallback profile {fallback}");
+                        break;
+                    }
+                }
+            }
+        }
 
         let left_grip_space = left_grip_action
             .create_space(&xr_session, xr::Path::NULL, xr::Posef::IDENTITY)
@@ -652,7 +717,7 @@ impl InteractionContext {
 }
 
 pub fn get_reference_space(
-    xr_session: &xr::Session<xr::OpenGlEs>,
+    xr_session: &xr::Session<ClientGraphics>,
     ty: xr::ReferenceSpaceType,
 ) -> xr::Space {
     xr_session
@@ -661,7 +726,7 @@ pub fn get_reference_space(
 }
 
 pub fn get_head_data(
-    xr_session: &xr::Session<xr::OpenGlEs>,
+    xr_session: &xr::Session<ClientGraphics>,
     platform: Platform,
     stage_reference_space: &xr::Space,
     view_reference_space: &xr::Space,
@@ -753,14 +818,16 @@ pub fn get_head_data(
     let current_ipd_m = crate::from_xr_vec3(views[1].pose.position)
         .distance(crate::from_xr_vec3(views[0].pose.position));
     let view_params = if f32::abs(current_ipd_m - last_ipd_m) > IPD_CHANGE_EPS {
+        let overdraw_ratio = get_fov_overdraw_ratio();
+        info!("Applying FOV overdraw ratio {overdraw_ratio} for Timewarp margin");
         Some([
             ViewParams {
                 pose: motion.pose.inverse() * crate::from_xr_pose(views[0].pose),
-                fov: crate::from_xr_fov(views[0].fov),
+                fov: scale_fov(crate::from_xr_fov(views[0].fov), overdraw_ratio),
             },
             ViewParams {
                 pose: motion.pose.inverse() * crate::from_xr_pose(views[1].pose),
-                fov: crate::from_xr_fov(views[1].fov),
+                fov: scale_fov(crate::from_xr_fov(views[1].fov), overdraw_ratio),
             },
         ])
     } else {
@@ -772,7 +839,7 @@ pub fn get_head_data(
 
 #[expect(clippy::too_many_arguments)]
 pub fn get_hand_data(
-    xr_session: &xr::Session<xr::OpenGlEs>,
+    xr_session: &xr::Session<ClientGraphics>,
     platform: Platform,
     reference_space: &xr::Space,
     time: Duration,
@@ -789,6 +856,12 @@ pub fn get_hand_data(
         .is_active(xr_session, xr::Path::NULL)
         .unwrap_or(false)
         && let Ok((location, velocity)) = hand_source.grip_space.relate(reference_space, xr_time)
+        && (location
+            .location_flags
+            .contains(xr::SpaceLocationFlags::ORIENTATION_VALID)
+            || location
+                .location_flags
+                .contains(xr::SpaceLocationFlags::POSITION_VALID))
     {
         let orientation_valid = location
             .location_flags
@@ -917,7 +990,7 @@ pub fn get_hand_data(
 }
 
 pub fn update_buttons(
-    xr_session: &xr::Session<xr::OpenGlEs>,
+    xr_session: &xr::Session<ClientGraphics>,
     button_actions: &HashMap<u64, ButtonAction>,
 ) -> Vec<ButtonEntry> {
     let mut button_entries = Vec::with_capacity(2);
@@ -957,7 +1030,7 @@ pub fn update_buttons(
 // For foveation, the server prefers combined gaze and only derives a common gaze from
 // the social pair when native combined gaze is absent.
 pub fn get_face_data(
-    xr_session: &xr::Session<xr::OpenGlEs>,
+    xr_session: &xr::Session<ClientGraphics>,
     platform: Platform,
     sources: &FaceSources,
     stage_reference_space: &xr::Space,

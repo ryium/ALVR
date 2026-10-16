@@ -139,6 +139,7 @@ fn serial_number(device_id: u64) -> String {
                 | ControllersEmulationMode::Pico4
                 | ControllersEmulationMode::PSVR2Sense
                 | ControllersEmulationMode::ValveIndex
+                | ControllersEmulationMode::SteamFrame
                 | ControllersEmulationMode::ViveWand
                 | ControllersEmulationMode::ViveTracker => "ALVR Remote Controller",
                 ControllersEmulationMode::Custom { serial_number, .. } => serial_number,
@@ -512,6 +513,38 @@ pub extern "C" fn set_device_openvr_props(instance_ptr: *mut c_void, device_id: 
                     set_prop(
                         InputProfilePathString,
                         "{indexcontroller}/input/index_controller_profile.json",
+                    );
+                }
+                ControllersEmulationMode::SteamFrame => {
+                    set_prop(TrackingSystemNameString, "frame_controller");
+                    set_prop(ManufacturerNameString, "Valve");
+                    if left_hand {
+                        set_prop(ModelNumberString, "Frame Controller (Left)");
+                        set_prop(
+                            RenderModelNameString,
+                            "{frame_controller}frame_controller_left",
+                        );
+                        set_prop(
+                            RegisteredDeviceTypeString,
+                            "valve/frame_controller_Left",
+                        );
+                        set_icons("{frame_controller}/icons/left_frame_controller");
+                    } else if right_hand {
+                        set_prop(ModelNumberString, "Frame Controller (Right)");
+                        set_prop(
+                            RenderModelNameString,
+                            "{frame_controller}frame_controller_right",
+                        );
+                        set_prop(
+                            RegisteredDeviceTypeString,
+                            "valve/frame_controller_Right",
+                        );
+                        set_icons("{frame_controller}/icons/right_frame_controller");
+                    }
+                    set_prop(ControllerTypeString, "frame_controller");
+                    set_prop(
+                        InputProfilePathString,
+                        "{frame_controller}/input/frame_controller_profile.json",
                     );
                 }
                 ControllersEmulationMode::ViveWand => {

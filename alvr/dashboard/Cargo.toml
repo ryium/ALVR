@@ -34,6 +34,7 @@ tungstenite = "0.29"
 ureq = { version = "3", features = ["json"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+alvr_audio = { workspace = true, features = ["linux-virtual-devices"] }
 wgpu = "25"
 libva = { package = "cros-libva", version = "0.0.7" } # Latest that works on Ubuntu 22.04
 nvml-wrapper = "0.12"

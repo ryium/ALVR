@@ -161,6 +161,7 @@ fn create_pipeline(
     push_constants_len: u32,
     shader: ShaderModuleDescriptor,
     topology: PrimitiveTopology,
+    format: wgpu::TextureFormat,
 ) -> RenderPipeline {
     let shader_module = device.create_shader_module(shader);
     device.create_render_pipeline(&RenderPipelineDescriptor {
@@ -191,7 +192,7 @@ fn create_pipeline(
             entry_point: None,
             compilation_options: Default::default(),
             targets: &[Some(ColorTargetState {
-                format: SDR_FORMAT,
+                format,
                 blend: Some(BlendState {
                     color: BlendComponent {
                         src_factor: BlendFactor::SrcAlpha,
@@ -218,12 +219,12 @@ pub struct LobbyViewParams {
 }
 
 pub struct LobbyRenderer {
-    context: Rc<GraphicsContext>,
     quad_pipeline: RenderPipeline,
     line_pipeline: RenderPipeline,
     hud_texture: Texture,
     bind_group: BindGroup,
     render_targets: [Vec<TextureView>; 2],
+    context: Rc<GraphicsContext>,
 }
 
 impl LobbyRenderer {
@@ -232,6 +233,7 @@ impl LobbyRenderer {
         view_resolution: UVec2,
         swapchain_textures: [Vec<u32>; 2],
         initial_hud_message: &str,
+        output_format: wgpu::TextureFormat,
     ) -> Self {
         let device = &context.device;
 
@@ -267,6 +269,7 @@ impl LobbyRenderer {
             QUAD_PUSH_CONTANTS_SIZE,
             include_wgsl!("../resources/lobby_quad.wgsl"),
             PrimitiveTopology::TriangleStrip,
+            output_format,
         );
 
         let line_pipeline = create_pipeline(
@@ -276,6 +279,7 @@ impl LobbyRenderer {
             LINE_PUSH_CONTANTS_SIZE,
             include_wgsl!("../resources/lobby_line.wgsl"),
             PrimitiveTopology::LineList,
+            output_format,
         );
 
         let bind_group = device.create_bind_group(&BindGroupDescriptor {
@@ -302,8 +306,18 @@ impl LobbyRenderer {
         });
 
         let render_targets = [
-            super::create_gl_swapchain(device, &swapchain_textures[0], view_resolution, SDR_FORMAT),
-            super::create_gl_swapchain(device, &swapchain_textures[1], view_resolution, SDR_FORMAT),
+            super::create_gl_swapchain(
+                device,
+                &swapchain_textures[0],
+                view_resolution,
+                output_format,
+            ),
+            super::create_gl_swapchain(
+                device,
+                &swapchain_textures[1],
+                view_resolution,
+                output_format,
+            ),
         ];
 
         let this = Self {

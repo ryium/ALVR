@@ -16,13 +16,14 @@ use alvr_gui_common::theme;
 use alvr_packets::{ClientConnectionsAction, PathValuePair};
 use alvr_session::SessionConfig;
 use eframe::egui::{
-    self, Align, CentralPanel, Direction, Frame, Layout, Margin, Panel, RichText, Ui,
+    self, Align, CentralPanel, Color32, Frame, Layout, Margin, Panel, RichText, Ui,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ServerRequest {
+    LaunchSteamvr,
     Log(LogEntry),
     GetSession,
     UpdateSession(Box<SessionConfig>),
@@ -46,6 +47,9 @@ pub enum ServerRequest {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Tab {
+    Home,
+    Help,
+    AdvancedSettings,
     Devices,
     Statistics,
     Settings,
@@ -57,6 +61,8 @@ enum Tab {
 }
 
 pub struct Dashboard {
+    frameconnect_tab: components::FrameConnectTab,
+    show_advanced: bool,
     data_sources: DataSources,
     just_opened: bool,
     server_restarting: Arc<Mutex<bool>>,
@@ -79,24 +85,43 @@ pub struct Dashboard {
 impl Dashboard {
     pub fn new(creation_context: &eframe::CreationContext<'_>, data_sources: DataSources) -> Self {
         alvr_gui_common::theme::set_theme(&creation_context.egui_ctx);
+        // Use the system Japanese font; do not redistribute Windows font files.
+        #[cfg(windows)]
+        if let Ok(font) = std::fs::read("C:/Windows/Fonts/meiryo.ttc") {
+            let mut fonts = egui::FontDefinitions::default();
+            fonts
+                .font_data
+                .insert("japanese".into(), egui::FontData::from_owned(font).into());
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .push("japanese".into());
+            creation_context.egui_ctx.set_fonts(fonts);
+        }
 
         data_sources.request(ServerRequest::GetSession);
 
         Self {
+            frameconnect_tab: components::FrameConnectTab::default(),
+            show_advanced: false,
             data_sources,
             just_opened: true,
             server_restarting: Arc::new(Mutex::new(false)),
             server_restarting_condvar: Arc::new(Condvar::new()),
-            selected_tab: Tab::Devices,
+            selected_tab: Tab::Home,
             tab_labels: [
-                (Tab::Devices, "🔌  Devices"),
-                (Tab::Statistics, "📈  Statistics"),
-                (Tab::Settings, "🔧  Settings"),
+                (Tab::Home, "デバイス"),
+                (Tab::Settings, "設定"),
+                (Tab::Help, "ヘルプセンター"),
+                (Tab::AdvancedSettings, "ALVRの詳細設定"),
+                (Tab::Devices, "デバイスの管理"),
+                (Tab::Statistics, "パフォーマンス"),
                 #[cfg(not(target_arch = "wasm32"))]
-                (Tab::Installation, "💾  Installation"),
-                (Tab::Logs, "📝  Logs"),
-                (Tab::Debug, "🐞  Debug"),
-                (Tab::About, "ℹ  About"),
+                (Tab::Installation, "ドライバー管理"),
+                (Tab::Logs, "システムログ"),
+                (Tab::Debug, "デバッグ"),
+                (Tab::About, "ライセンス・情報"),
             ]
             .into_iter()
             .collect(),
@@ -159,6 +184,8 @@ impl eframe::App for Dashboard {
                     .statistics_tab
                     .update_graph_statistics(graph_statistics),
                 EventType::StatisticsSummary(statistics) => {
+                    self.frameconnect_tab.statistics =
+                        Some((statistics.clone(), std::time::Instant::now()));
                     self.statistics_tab.update_statistics(statistics)
                 }
                 EventType::Session(session) => {
@@ -170,7 +197,7 @@ impl eframe::App for Dashboard {
                     self.notification_bar.update_settings(&settings);
                     if self.just_opened {
                         if settings.extra.open_setup_wizard {
-                            self.setup_wizard_open = true;
+                            self.selected_tab = Tab::Help;
                         }
 
                         self.just_opened = false;
@@ -185,7 +212,9 @@ impl eframe::App for Dashboard {
                     .connections_tab
                     .update_adb_download_progress(adb_event.download_progress),
                 EventType::NewVersionFound { version, message } => {
-                    self.new_version_popup = Some(NewVersionPopup::new(version, message));
+                    if self.show_advanced {
+                        self.new_version_popup = Some(NewVersionPopup::new(version, message));
+                    }
                 }
                 EventType::DebugGroup { .. }
                 | EventType::Tracking(_)
@@ -199,14 +228,14 @@ impl eframe::App for Dashboard {
                 // todo: find a way to center both vertically and horizontally
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.0);
-                    ui.heading(RichText::new("SteamVR is restarting").size(30.0));
+                    ui.heading(RichText::new("SteamVRを再起動しています").size(30.0));
                 });
             });
 
             return;
         }
 
-        self.notification_bar.ui(ui);
+        self.notification_bar.ui(ui, self.show_advanced);
 
         if self.setup_wizard_open {
             CentralPanel::default().show(ui, |ui| {
@@ -236,67 +265,187 @@ impl eframe::App for Dashboard {
         } else {
             Panel::left("side_panel")
                 .resizable(false)
+                .exact_size(204.0)
                 .frame(
                     Frame::new()
                         .fill(theme::LIGHTER_BG)
-                        .inner_margin(Margin::same(7)),
+                        .inner_margin(Margin::symmetric(16, 24)),
                 )
-                .exact_size(160.0)
                 .show(ui, |ui| {
-                    ui.with_layout(Layout::top_down_justified(Align::Center), |ui| {
-                        ui.add_space(13.0);
-                        ui.heading(RichText::new("ALVR").size(25.0).strong());
-                        egui::warn_if_debug_build(ui);
-                    });
-
-                    ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
-                        for (tab, label) in &self.tab_labels {
-                            ui.selectable_value(&mut self.selected_tab, *tab, *label);
-                        }
-                    });
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    ui.with_layout(
-                        Layout::bottom_up(Align::Center).with_cross_justify(true),
-                        |ui| {
-                            ui.add_space(5.0);
-
-                            if connected_to_server {
-                                if ui.button("Restart SteamVR").clicked() {
-                                    self.restart_steamvr(&mut requests);
-                                }
-                            } else if ui.button("Launch SteamVR").clicked() {
-                                crate::steamvr_launcher::LAUNCHER.lock().launch_steamvr();
-                            }
-
-                            ui.horizontal(|ui| {
-                                ui.add_space(4.0);
-                                ui.label(RichText::new("SteamVR:").size(13.0));
-                                ui.add_space(-10.0);
-                                ui.with_layout(
-                                    Layout::centered_and_justified(Direction::LeftToRight),
-                                    |ui| {
-                                        ui.label(
-                                            if connected_to_server {
-                                                RichText::new("Connected").color(theme::OK_GREEN)
-                                            } else {
-                                                RichText::new("Disconnected").color(theme::KO_RED)
-                                            }
-                                            .size(13.0),
-                                        )
-                                    },
-                                );
+                    components::desktop_brand(ui);
+                    ui.add_space(34.0);
+                    for tab in [Tab::Home, Tab::Settings, Tab::Help] {
+                        let selected = match tab {
+                            Tab::Home => self.selected_tab == Tab::Home,
+                            Tab::Help => self.selected_tab == Tab::Help,
+                            _ => !matches!(self.selected_tab, Tab::Home | Tab::Help),
+                        };
+                        let icon = match tab {
+                            Tab::Home => components::DesktopIcon::Headset,
+                            Tab::Help => components::DesktopIcon::Help,
+                            _ => components::DesktopIcon::Settings,
+                        };
+                        let color = if selected {
+                            theme::ACCENT_LIGHT
+                        } else {
+                            theme::SUBTEXT
+                        };
+                        let response = Frame::new()
+                            .fill(if selected {
+                                theme::ACCENT_BG
+                            } else {
+                                Color32::TRANSPARENT
                             })
-                        },
-                    )
+                            .corner_radius(8)
+                            .inner_margin(Margin::symmetric(12, 10))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    components::desktop_icon(ui, icon, color);
+                                    ui.label(
+                                        RichText::new(self.tab_labels[&tab])
+                                            .color(color)
+                                            .size(14.0),
+                                    );
+                                });
+                            })
+                            .response
+                            .interact(egui::Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if response.clicked() {
+                            self.selected_tab = tab;
+                        }
+                        ui.add_space(4.0);
+                    }
+                    ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                        ui.label(
+                            RichText::new(format!("Version {}", *alvr_common::ALVR_VERSION))
+                                .size(10.0)
+                                .color(theme::SUBTEXT),
+                        );
+                        ui.label(
+                            RichText::new("PCストリーミング")
+                                .size(11.0)
+                                .color(theme::SUBTEXT),
+                        );
+                        ui.add_space(14.0);
+                        ui.separator();
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("●")
+                                    .color(if connected_to_server {
+                                        theme::OK_GREEN
+                                    } else {
+                                        theme::SUBTEXT
+                                    })
+                                    .size(10.0),
+                            );
+                            ui.label(
+                                RichText::new(if connected_to_server {
+                                    "SteamVR 起動中"
+                                } else {
+                                    "SteamVR 停止中"
+                                })
+                                .size(12.0),
+                            );
+                        });
+                    });
                 });
 
             CentralPanel::default()
-                .frame(Frame::new().inner_margin(Margin::same(20)).fill(theme::BG))
+                .frame(Frame::new().inner_margin(Margin::same(28)).fill(theme::BG))
                 .show(ui, |ui| {
                     ui.with_layout(Layout::top_down_justified(Align::LEFT), |ui| {
-                        ui.heading(RichText::new(self.tab_labels[&self.selected_tab]).size(25.0));
+                        if !matches!(self.selected_tab, Tab::Home | Tab::Settings | Tab::Help) {
+                            if ui.small_button("‹ 設定に戻る").clicked() {
+                                self.selected_tab = Tab::Settings;
+                            }
+                            ui.add_space(8.0);
+                        }
+                        ui.label(
+                            RichText::new(self.tab_labels[&self.selected_tab])
+                                .size(24.0)
+                                .strong(),
+                        );
+                        let subtitle = match self.selected_tab {
+                            Tab::Home => "PCとSteam Frameをつなぐ",
+                            Tab::Settings => "お好みに合わせてストリーミングを調整",
+                            Tab::Help => "接続ガイドとトラブルシューティング",
+                            _ => "開発者向けツール",
+                        };
+                        ui.label(RichText::new(subtitle).color(theme::SUBTEXT).size(12.0));
+                        ui.add_space(20.0);
                         match self.selected_tab {
+                            Tab::Home => {
+                                egui::ScrollArea::vertical().id_salt("device_page").show(
+                                    ui,
+                                    |ui| {
+                                        requests.extend(self.frameconnect_tab.devices_ui(
+                                            ui,
+                                            self.session.as_ref(),
+                                            connected_to_server,
+                                        ));
+                                    },
+                                );
+                            }
+                            Tab::Settings => {
+                                egui::ScrollArea::vertical()
+                                    .id_salt("simple_settings_page")
+                                    .show(ui, |ui| {
+                                        requests.extend(self.frameconnect_tab.settings_ui(
+                                            ui,
+                                            self.session.as_ref(),
+                                            connected_to_server,
+                                            self.show_advanced,
+                                        ));
+                                        ui.add_space(24.0);
+                                        ui.collapsing(
+                                            RichText::new("開発者向け")
+                                                .size(12.0)
+                                                .color(theme::SUBTEXT),
+                                            |ui| {
+                                                ui.checkbox(
+                                                    &mut self.show_advanced,
+                                                    "ALVRの詳細ツールを表示",
+                                                );
+                                                if self.show_advanced {
+                                                    ui.add_space(8.0);
+                                                    ui.horizontal_wrapped(|ui| {
+                                                        for tab in [
+                                                            Tab::AdvancedSettings,
+                                                            Tab::Devices,
+                                                            Tab::Statistics,
+                                                            #[cfg(not(target_arch = "wasm32"))]
+                                                            Tab::Installation,
+                                                            Tab::Logs,
+                                                            Tab::Debug,
+                                                            Tab::About,
+                                                        ] {
+                                                            if ui
+                                                                .button(self.tab_labels[&tab])
+                                                                .clicked()
+                                                            {
+                                                                self.selected_tab = tab;
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                        );
+                                    });
+                            }
+                            Tab::Help => {
+                                egui::ScrollArea::vertical()
+                                    .id_salt("help_page")
+                                    .show(ui, |ui| {
+                                        requests.extend(self.frameconnect_tab.help_ui(
+                                            ui,
+                                            self.session.as_ref(),
+                                            connected_to_server,
+                                        ));
+                                    });
+                            }
                             Tab::Devices => {
                                 requests.extend(self.connections_tab.ui(ui, connected_to_server));
                             }
@@ -305,7 +454,7 @@ impl eframe::App for Dashboard {
                                     requests.push(request);
                                 }
                             }
-                            Tab::Settings => {
+                            Tab::AdvancedSettings => {
                                 requests.extend(self.settings_tab.ui(ui));
                             }
                             #[cfg(not(target_arch = "wasm32"))]
@@ -317,9 +466,7 @@ impl eframe::App for Dashboard {
                                         }
                                         components::InstallationTabRequest::ServerRequest(
                                             request,
-                                        ) => {
-                                            requests.push(request);
-                                        }
+                                        ) => requests.push(request),
                                     }
                                 }
                             }
@@ -331,7 +478,7 @@ impl eframe::App for Dashboard {
                             }
                             Tab::About => components::about_tab_ui(ui),
                         }
-                    })
+                    });
                 });
         }
 

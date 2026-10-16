@@ -226,6 +226,9 @@ impl DataSources {
 
                         if let SessionSource::Local(session_manager) = &mut *session_source.lock() {
                             match request {
+                                ServerRequest::LaunchSteamvr => {
+                                    crate::steamvr_launcher::LAUNCHER.lock().launch_steamvr()
+                                }
                                 ServerRequest::Log(_) => (),
                                 ServerRequest::GetSession => {
                                     report_session_local(&context, &events_sender, session_manager);
@@ -340,6 +343,7 @@ impl DataSources {
                             let post = |path: &str| post_body(&rq, &base_uri, path, None::<()>);
 
                             match request {
+                                ServerRequest::LaunchSteamvr => (),
                                 ServerRequest::Log(entry) => {
                                     post_body(&rq, &base_uri, "log", Some(entry))
                                 }
@@ -368,7 +372,12 @@ impl DataSources {
                                 ServerRequest::StartRecording => post("recording/start"),
                                 ServerRequest::StopRecording => post("recording/stop"),
                                 ServerRequest::RestartSteamvr => post("restart-steamvr"),
-                                ServerRequest::ShutdownSteamvr => post("shutdown-steamvr"),
+                                ServerRequest::ShutdownSteamvr => {
+                                    post("shutdown-steamvr");
+                                    crate::steamvr_launcher::LAUNCHER
+                                        .lock()
+                                        .ensure_steamvr_shutdown();
+                                }
                             }
                         }
                     }

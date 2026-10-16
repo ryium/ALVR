@@ -28,7 +28,7 @@ pub const STATISTICS: u16 = 4;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct VideoStreamingCapabilitiesExt {
-    // Nothing for now
+    pub frameconnect: Option<alvr_common::frameconnect::FrameConnectCapabilities>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -56,11 +56,7 @@ impl VideoStreamingCapabilities {
     }
 
     pub fn ext(&self) -> Result<VideoStreamingCapabilitiesExt> {
-        let _ext_json = json::from_str::<json::Value>(&self.ext_str)?;
-
-        // decode values here
-
-        Ok(VideoStreamingCapabilitiesExt {})
+        Ok(json::from_str(&self.ext_str)?)
     }
 }
 
@@ -80,7 +76,9 @@ pub enum ClientConnectionResult {
 
 #[derive(Serialize, Deserialize)]
 pub struct NegotiatedStreamingConfigExt {
-    // Nothing for now
+    pub decoder_name: String,
+    pub encoded_width: u32,
+    pub encoded_height: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -104,11 +102,7 @@ impl ClientNegotiatedStreamingConfig {
     }
 
     pub fn ext(&self) -> Result<NegotiatedStreamingConfigExt> {
-        let _ext_json = json::from_str::<json::Value>(&self.ext_str)?;
-
-        // decode values here
-
-        Ok(NegotiatedStreamingConfigExt {})
+        Ok(json::from_str(&self.ext_str)?)
     }
 }
 

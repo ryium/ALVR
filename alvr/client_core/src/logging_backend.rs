@@ -94,7 +94,7 @@ pub fn init_logging() {
     {
         android_logger::init_once(
             android_logger::Config::default()
-                .with_tag("[ALVR NATIVE-RUST]")
+                .with_tag("FrameConnect")
                 .format(|f, record| {
                     if send_log(record) {
                         writeln!(f, "{}", record.args())
@@ -108,9 +108,37 @@ pub fn init_logging() {
     #[cfg(not(target_os = "android"))]
     {
         use std::io::Write;
+
+        #[cfg(target_os = "linux")]
+        let file_logger = {
+            if let Ok(home) = std::env::var("HOME") {
+                let log_dir = format!("{home}/.local/state/frameconnect");
+                let _ = std::fs::create_dir_all(&log_dir);
+                let log_file = format!("{log_dir}/client.log");
+                let old_log_file = format!("{log_dir}/client.log.old");
+                let _ = std::fs::rename(&log_file, &old_log_file);
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(log_file)
+                    .ok()
+            } else {
+                None
+            }
+        };
+        #[cfg(target_os = "linux")]
+        let file_logger = std::sync::Mutex::new(file_logger);
+
         env_logger::builder()
-            .format(|f, record| {
+            .format(move |f, record| {
                 if send_log(record) {
+                    #[cfg(target_os = "linux")]
+                    if let Ok(mut lock) = file_logger.lock() {
+                        if let Some(file) = lock.as_mut() {
+                            let _ = writeln!(file, "[{}] {}", record.level(), record.args());
+                        }
+                    }
                     writeln!(f, "{}", record.args())
                 } else {
                     Ok(())

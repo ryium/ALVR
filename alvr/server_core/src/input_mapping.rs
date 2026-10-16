@@ -34,6 +34,11 @@ pub fn registered_button_set(
             .unwrap()
             .button_set
             .clone(),
+        ControllersEmulationMode::SteamFrame => CONTROLLER_PROFILE_INFO
+            .get(&FRAME_CONTROLLER_PROFILE_ID)
+            .unwrap()
+            .button_set
+            .clone(),
         ControllersEmulationMode::ViveWand => CONTROLLER_PROFILE_INFO
             .get(&VIVE_CONTROLLER_PROFILE_ID)
             .unwrap()
@@ -587,6 +592,73 @@ pub fn automatic_bindings(
                 config,
             ));
         }
+    }
+
+    // DPAD
+    if s_set.contains(&*LEFT_DPAD_UP_CLICK_ID) && d_set.contains(&*LEFT_DPAD_UP_CLICK_ID) {
+        bindings.extend(map_button_pair_automatic(
+            ct(s_set, *LEFT_DPAD_UP_CLICK_ID, *LEFT_DPAD_UP_TOUCH_ID),
+            ct(d_set, *LEFT_DPAD_UP_CLICK_ID, *LEFT_DPAD_UP_TOUCH_ID),
+            config,
+        ));
+    }
+    if s_set.contains(&*LEFT_DPAD_DOWN_CLICK_ID) && d_set.contains(&*LEFT_DPAD_DOWN_CLICK_ID) {
+        bindings.extend(map_button_pair_automatic(
+            ct(s_set, *LEFT_DPAD_DOWN_CLICK_ID, *LEFT_DPAD_DOWN_TOUCH_ID),
+            ct(d_set, *LEFT_DPAD_DOWN_CLICK_ID, *LEFT_DPAD_DOWN_TOUCH_ID),
+            config,
+        ));
+    }
+    if s_set.contains(&*LEFT_DPAD_LEFT_CLICK_ID) && d_set.contains(&*LEFT_DPAD_LEFT_CLICK_ID) {
+        bindings.extend(map_button_pair_automatic(
+            ct(s_set, *LEFT_DPAD_LEFT_CLICK_ID, *LEFT_DPAD_LEFT_TOUCH_ID),
+            ct(d_set, *LEFT_DPAD_LEFT_CLICK_ID, *LEFT_DPAD_LEFT_TOUCH_ID),
+            config,
+        ));
+    }
+    if s_set.contains(&*LEFT_DPAD_RIGHT_CLICK_ID) && d_set.contains(&*LEFT_DPAD_RIGHT_CLICK_ID) {
+        bindings.extend(map_button_pair_automatic(
+            ct(s_set, *LEFT_DPAD_RIGHT_CLICK_ID, *LEFT_DPAD_RIGHT_TOUCH_ID),
+            ct(d_set, *LEFT_DPAD_RIGHT_CLICK_ID, *LEFT_DPAD_RIGHT_TOUCH_ID),
+            config,
+        ));
+    }
+
+    // View & Bumpers
+    if s_set.contains(&*LEFT_VIEW_CLICK_ID) && d_set.contains(&*LEFT_VIEW_CLICK_ID) {
+        bindings.extend(map_button_pair_automatic(
+            ct(s_set, *LEFT_VIEW_CLICK_ID, *LEFT_VIEW_TOUCH_ID),
+            ct(d_set, *LEFT_VIEW_CLICK_ID, *LEFT_VIEW_TOUCH_ID),
+            config,
+        ));
+    }
+    if s_set.contains(&*LEFT_BUMPER_CLICK_ID) && d_set.contains(&*LEFT_BUMPER_CLICK_ID) {
+        bindings.extend(map_button_pair_automatic(
+            ct(s_set, *LEFT_BUMPER_CLICK_ID, *LEFT_BUMPER_TOUCH_ID),
+            ct(d_set, *LEFT_BUMPER_CLICK_ID, *LEFT_BUMPER_TOUCH_ID),
+            config,
+        ));
+    }
+    if s_set.contains(&*RIGHT_BUMPER_CLICK_ID) && d_set.contains(&*RIGHT_BUMPER_CLICK_ID) {
+        bindings.extend(map_button_pair_automatic(
+            ct(s_set, *RIGHT_BUMPER_CLICK_ID, *RIGHT_BUMPER_TOUCH_ID),
+            ct(d_set, *RIGHT_BUMPER_CLICK_ID, *RIGHT_BUMPER_TOUCH_ID),
+            config,
+        ));
+    }
+    if s_set.contains(&*RIGHT_X_CLICK_ID) && d_set.contains(&*RIGHT_X_CLICK_ID) {
+        bindings.extend(map_button_pair_automatic(
+            ct(s_set, *RIGHT_X_CLICK_ID, *RIGHT_X_TOUCH_ID),
+            ct(d_set, *RIGHT_X_CLICK_ID, *RIGHT_X_TOUCH_ID),
+            config,
+        ));
+    }
+    if s_set.contains(&*RIGHT_Y_CLICK_ID) && d_set.contains(&*RIGHT_Y_CLICK_ID) {
+        bindings.extend(map_button_pair_automatic(
+            ct(s_set, *RIGHT_Y_CLICK_ID, *RIGHT_Y_TOUCH_ID),
+            ct(d_set, *RIGHT_Y_CLICK_ID, *RIGHT_Y_TOUCH_ID),
+            config,
+        ));
     }
 
     bindings

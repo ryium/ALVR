@@ -1,20 +1,20 @@
 use crate::{
-    graphics::{self, ProjectionLayerAlphaConfig, ProjectionLayerBuilder},
+    graphics::{self, ClientGraphics, ProjectionLayerAlphaConfig, ProjectionLayerBuilder},
     interaction::{self, InteractionContext},
 };
 use alvr_common::{Pose, ViewParams, glam::UVec2, parking_lot::RwLock};
-use alvr_graphics::{GraphicsContext, LobbyRenderer, LobbyViewParams, SDR_FORMAT_GL};
+use alvr_graphics::{GraphicsContext, LobbyRenderer, LobbyViewParams};
 use alvr_system_info::Platform;
 use openxr as xr;
 use std::{rc::Rc, sync::Arc, time::Duration};
 
 // todo: add interaction?
 pub struct Lobby {
-    xr_session: xr::Session<xr::OpenGlEs>,
+    xr_session: xr::Session<ClientGraphics>,
     interaction_ctx: Arc<RwLock<InteractionContext>>,
     platform: Platform,
     reference_space: xr::Space,
-    swapchains: [xr::Swapchain<xr::OpenGlEs>; 2],
+    swapchains: [xr::Swapchain<ClientGraphics>; 2],
     view_resolution: UVec2,
     reference_space_type: xr::ReferenceSpaceType,
     renderer: LobbyRenderer,
@@ -22,7 +22,7 @@ pub struct Lobby {
 
 impl Lobby {
     pub fn new(
-        xr_session: xr::Session<xr::OpenGlEs>,
+        xr_session: xr::Session<ClientGraphics>,
         gfx_ctx: Rc<GraphicsContext>,
         interaction_ctx: Arc<RwLock<InteractionContext>>,
         platform: Platform,
@@ -39,9 +39,10 @@ impl Lobby {
 
         let reference_space = interaction::get_reference_space(&xr_session, reference_space_type);
 
+        let format = graphics::swapchain_format(&gfx_ctx, &xr_session, false);
         let swapchains = [
-            graphics::create_swapchain(&xr_session, &gfx_ctx, view_resolution, SDR_FORMAT_GL, None),
-            graphics::create_swapchain(&xr_session, &gfx_ctx, view_resolution, SDR_FORMAT_GL, None),
+            graphics::create_swapchain(&xr_session, &gfx_ctx, view_resolution, format, None),
+            graphics::create_swapchain(&xr_session, &gfx_ctx, view_resolution, format, None),
         ];
 
         let renderer = LobbyRenderer::new(
@@ -62,6 +63,7 @@ impl Lobby {
                     .collect(),
             ],
             initial_hud_message,
+            alvr_graphics::gl_format_to_wgpu(format),
         );
 
         Self {

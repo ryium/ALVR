@@ -112,6 +112,7 @@ pub fn compute_restart_settings_hash(
             ControllersEmulationMode::QuestPro => 4,
             ControllersEmulationMode::Pico4 => 10,
             ControllersEmulationMode::ValveIndex => 20,
+            ControllersEmulationMode::SteamFrame => 25,
             ControllersEmulationMode::ViveWand => 40,
             ControllersEmulationMode::ViveTracker => 41,
             ControllersEmulationMode::PSVR2Sense => 60,
@@ -631,39 +632,21 @@ fn connection_pipeline(
         UVec2::new(align32(res.x), align32(res.y))
     }
 
-    let mut transcoding_view_resolution = get_view_res(
+    let transcoding_view_resolution = get_view_res(
         initial_settings.video.transcoding_view_resolution.clone(),
         streaming_caps.default_view_resolution,
     );
     if transcoding_view_resolution.x > streaming_caps.max_view_resolution.x
         || transcoding_view_resolution.y > streaming_caps.max_view_resolution.y
     {
-        warn!(
+        con_bail!(
             "Chosen resolution {}x{} exceeds client maximum supported resolution of {}x{}. \
-            Using maximum supported resolution at same aspect ratio.",
+            Select a supported resolution explicitly in FrameConnect.",
             transcoding_view_resolution.x,
             transcoding_view_resolution.y,
             streaming_caps.max_view_resolution.x,
             streaming_caps.max_view_resolution.y,
         );
-
-        let transcoding_ratio =
-            transcoding_view_resolution.x as f32 / transcoding_view_resolution.y as f32;
-
-        if transcoding_ratio
-            > streaming_caps.max_view_resolution.x as f32
-                / streaming_caps.max_view_resolution.y as f32
-        {
-            transcoding_view_resolution = UVec2::new(
-                align32(streaming_caps.max_view_resolution.x as f32),
-                align32(streaming_caps.max_view_resolution.x as f32 / transcoding_ratio),
-            );
-        } else {
-            transcoding_view_resolution = UVec2::new(
-                align32(streaming_caps.max_view_resolution.y as f32 * transcoding_ratio),
-                align32(streaming_caps.max_view_resolution.y as f32),
-            );
-        }
     }
 
     let emulated_headset_view_resolution = get_view_res(
@@ -674,18 +657,117 @@ fn connection_pipeline(
         streaming_caps.default_view_resolution,
     );
 
-    let fps = {
-        let mut best_match = 0_f32;
-        let mut min_diff = f32::MAX;
-        for rate in &streaming_caps.refresh_rates {
-            let diff = (*rate - initial_settings.video.preferred_fps).abs();
-            if diff < min_diff {
-                best_match = *rate;
-                min_diff = diff;
-            }
-        }
-        best_match
+    let caps = streaming_caps.ext().to_con()?.frameconnect;
+    let Some(caps) = caps else {
+        con_bail!(
+            "FrameConnectの同じバージョンの受信アプリを使用してください。端末の診断情報がありません。"
+        );
     };
+    if caps.version != alvr_common::frameconnect::CAPABILITY_VERSION {
+        con_bail!("FrameConnectの能力情報のバージョンが一致しません。");
+    }
+    if let Some(error) = &caps.probe_error {
+        con_bail!("端末のハードウェアデコーダーを確認できません: {error}");
+    }
+    if initial_settings.video.force_software_decoder
+        || initial_settings
+            .video
+            .encoder_config
+            .software
+            .force_software_encoding
+    {
+        con_bail!("FrameConnectはハードウェアのエンコード・デコードを必要とします。");
+    }
+    let mime = match initial_settings.video.preferred_codec {
+        CodecType::AV1 => "video/av01",
+        CodecType::Hevc => "video/hevc",
+        _ => con_bail!("FrameConnect初版ではAV1またはHEVCを選択してください。"),
+    };
+    let ten_bit = initial_settings
+        .video
+        .encoder_config
+        .use_10bit
+        .unwrap_or(false);
+    let supported_rates: Vec<f32> = streaming_caps
+        .refresh_rates
+        .iter()
+        .copied()
+        .filter(|fps| {
+            caps.decoder(
+                mime,
+                transcoding_view_resolution.x * 2,
+                transcoding_view_resolution.y,
+                *fps,
+                ten_bit,
+            )
+            .is_some()
+        })
+        .collect();
+    let selection_key = format!(
+        "{client_hostname}:{mime}:{}:{}:{ten_bit}:{}:{}",
+        transcoding_view_resolution.x,
+        transcoding_view_resolution.y,
+        initial_settings.video.preferred_fps,
+        initial_settings.video.frameconnect_auto_refresh_rate
+    );
+    if session_manager_lock.session().frameconnect.selection_key != selection_key {
+        session_manager_lock.session_mut().frameconnect = alvr_session::FrameConnectSession {
+            selection_key,
+            ..Default::default()
+        };
+    }
+    let ceiling = if initial_settings.video.frameconnect_auto_refresh_rate {
+        session_manager_lock.session().frameconnect.rate_ceiling
+    } else {
+        None
+    };
+    let fps = alvr_common::frameconnect::select_rate(
+        &supported_rates,
+        initial_settings.video.preferred_fps,
+        ceiling,
+    );
+    let Some(fps) = fps else {
+        con_bail!(
+            "選択した画質・コーデックに対応するハードウェア復号経路がありません。画質を下げるか、端末の表示設定と診断ログを確認してください。HEVCへの自動切替は行いません。"
+        );
+    };
+    if !initial_settings.video.frameconnect_auto_refresh_rate
+        && (fps - initial_settings.video.preferred_fps).abs() > 0.5
+    {
+        con_bail!(
+            "指定した表示周期に端末が対応していません。自動設定または対応する周期を選択してください。"
+        );
+    }
+    let decoder_name = caps
+        .decoder(
+            mime,
+            transcoding_view_resolution.x * 2,
+            transcoding_view_resolution.y,
+            fps,
+            ten_bit,
+        )
+        .unwrap()
+        .name
+        .clone();
+    if let Switch::Enabled(config) = &initial_settings.headset.face_tracking
+        && config.sink.eye_tracked_foveated_encoding
+        && !caps.eye_gaze
+    {
+        con_bail!("端末で視線追従を利用できません。視線追従を無効にしてください。");
+    }
+    {
+        let mut session = session_manager_lock.session_mut();
+        session.frameconnect.negotiated = Some(alvr_session::FrameConnectNegotiated {
+            hostname: client_hostname.clone(),
+            codec: mime.into(),
+            decoder: decoder_name.clone(),
+            eye_width: transcoding_view_resolution.x,
+            eye_height: transcoding_view_resolution.y,
+            refresh_rate: fps,
+            ten_bit,
+            capabilities: caps,
+        });
+    }
 
     if !streaming_caps
         .refresh_rates
@@ -775,23 +857,18 @@ fn connection_pipeline(
         initial_settings.video.encoder_config.h264_profile
     };
 
-    let mut enable_10_bits_encoding = initial_settings
-        .video
-        .encoder_config
-        .use_10bit
-        .unwrap_or(streaming_caps.prefer_10bit);
-
-    if enable_10_bits_encoding && !streaming_caps.encoder_10_bits {
-        warn!("10 bits encoding is not supported by the client.");
-        enable_10_bits_encoding = false
-    }
+    // Use exactly the bit depth checked against the selected decoder above.
+    let enable_10_bits_encoding = ten_bit;
 
     let enable_hdr = initial_settings
         .video
         .encoder_config
         .hdr
         .enable
-        .unwrap_or(streaming_caps.prefer_hdr);
+        .unwrap_or(false);
+    if enable_hdr && !enable_10_bits_encoding {
+        con_bail!("HDRには10bitの明示選択と対応するハードウェア復号経路が必要です。");
+    }
 
     let encoding_gamma = initial_settings
         .video
@@ -799,21 +876,7 @@ fn connection_pipeline(
         .encoding_gamma
         .unwrap_or(streaming_caps.preferred_encoding_gamma);
 
-    let codec = if initial_settings.video.preferred_codec == CodecType::AV1 {
-        let codec = if streaming_caps.encoder_av1 {
-            CodecType::AV1
-        } else {
-            CodecType::Hevc
-        };
-
-        if codec != CodecType::AV1 {
-            warn!("AV1 encoding is not supported by the client.");
-        }
-
-        codec
-    } else {
-        initial_settings.video.preferred_codec
-    };
+    let codec = initial_settings.video.preferred_codec;
 
     #[cfg(not(target_os = "windows"))]
     let game_audio_sample_rate = 44100;
@@ -862,7 +925,15 @@ fn connection_pipeline(
             wired,
             ext_str: String::new(),
         }
-        .with_ext(NegotiatedStreamingConfigExt {}),
+        .with_ext(NegotiatedStreamingConfigExt {
+            decoder_name,
+            encoded_width: foveated_encoding.map_or(transcoding_view_resolution.x * 2, |f| {
+                f.encoded_view_resolution[0] * 2
+            }),
+            encoded_height: foveated_encoding.map_or(transcoding_view_resolution.y, |f| {
+                f.encoded_view_resolution[1]
+            }),
+        }),
     )
     .to_con()?;
 
@@ -1138,6 +1209,8 @@ fn connection_pipeline(
         let ctx = Arc::clone(&ctx);
         let client_hostname = client_hostname.clone();
         move || {
+            let mut rate_monitor = alvr_common::frameconnect::RateMonitor::new(fps);
+            let mut last_timestamp = None;
             while is_streaming(&client_hostname) {
                 let data = match statics_receiver.recv(STREAMING_RECV_TIMEOUT) {
                     Ok(stats) => stats,
@@ -1147,6 +1220,36 @@ fn connection_pipeline(
                 let Ok(client_stats) = data.get_header() else {
                     return;
                 };
+                if last_timestamp.is_some_and(|ts| client_stats.target_timestamp <= ts) {
+                    continue;
+                }
+                last_timestamp = Some(client_stats.target_timestamp);
+                if let Some(reason) = rate_monitor.observe(
+                    client_stats.frame_interval,
+                    client_stats.video_decode,
+                    client_stats.video_decoder_queue,
+                ) {
+                    let mut manager = SESSION_MANAGER.write();
+                    if manager.settings().video.frameconnect_auto_refresh_rate {
+                        if let Some(next) = alvr_common::frameconnect::select_rate(
+                            &supported_rates,
+                            fps - 1.0,
+                            None,
+                        ) {
+                            {
+                                let mut session = manager.session_mut();
+                                session.frameconnect.rate_ceiling = Some(next);
+                                session.frameconnect.reason = Some(reason.clone());
+                            }
+                            warn!("{reason} ({fps:.0} → {next:.0} Hz)");
+                            drop(manager);
+                            crate::notify_restart_driver();
+                            return;
+                        } else {
+                            manager.session_mut().frameconnect.reason = Some("90Hzでも安定条件に届いていません。ゲーム負荷・Wi-Fi・診断ログを確認してください。".into());
+                        }
+                    }
+                }
 
                 if let Some(stats) = &mut *ctx.statistics_manager.write() {
                     let timestamp = client_stats.target_timestamp;

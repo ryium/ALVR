@@ -6,6 +6,8 @@ use std::{
 };
 
 struct HistoryFrame {
+    submitted: bool,
+    reported: bool,
     input_acquired: Instant,
     video_packet_received: Instant,
     client_stats: ClientStatistics,
@@ -38,6 +40,8 @@ impl StatisticsManager {
             .any(|frame| frame.client_stats.target_timestamp == target_timestamp)
         {
             self.history_buffer.push_front(HistoryFrame {
+                submitted: false,
+                reported: false,
                 input_acquired: Instant::now(),
                 // this is just a placeholder because Instant does not have a default value
                 video_packet_received: Instant::now(),
@@ -91,11 +95,10 @@ impl StatisticsManager {
     pub fn report_submit(&mut self, target_timestamp: Duration, vsync_queue: Duration) {
         let now = Instant::now();
 
-        if let Some(frame) = self
-            .history_buffer
-            .iter_mut()
-            .find(|frame| frame.client_stats.target_timestamp == target_timestamp)
-        {
+        if let Some(frame) = self.history_buffer.iter_mut().find(|frame| {
+            frame.client_stats.target_timestamp == target_timestamp && !frame.submitted
+        }) {
+            frame.submitted = true;
             frame.client_stats.rendering = now.saturating_duration_since(
                 frame.video_packet_received
                     + frame.client_stats.video_decode
@@ -113,15 +116,57 @@ impl StatisticsManager {
         }
     }
 
-    pub fn summary(&self, target_timestamp: Duration) -> Option<ClientStatistics> {
+    pub fn summary(&mut self, target_timestamp: Duration) -> Option<ClientStatistics> {
         self.history_buffer
-            .iter()
-            .find(|frame| frame.client_stats.target_timestamp == target_timestamp)
-            .map(|frame| frame.client_stats.clone())
+            .iter_mut()
+            .find(|frame| {
+                frame.client_stats.target_timestamp == target_timestamp
+                    && frame.submitted
+                    && !frame.reported
+            })
+            .map(|frame| {
+                frame.reported = true;
+                frame.client_stats.clone()
+            })
     }
 
     // latency used for head prediction
     pub fn average_total_pipeline_latency(&self) -> Duration {
         self.total_pipeline_latency_average.get_average()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reprojection_does_not_count_as_a_new_video_frame() {
+        let mut stats = StatisticsManager::new(8);
+        let timestamp = Duration::from_secs(1);
+        stats.report_input_acquired(timestamp);
+        assert!(stats.summary(timestamp).is_none());
+        stats.report_submit(timestamp, Duration::from_millis(5));
+        let vsync = stats.prev_vsync;
+        let original = stats.summary(timestamp).unwrap();
+        stats.report_submit(timestamp, Duration::from_millis(100));
+        assert_eq!(stats.prev_vsync, vsync);
+        assert!(stats.summary(timestamp).is_none());
+        assert_eq!(original.vsync_queue, Duration::from_millis(5));
+        let next = timestamp + Duration::from_millis(10);
+        stats.report_input_acquired(next);
+        stats.report_submit(next, Duration::from_millis(10));
+        assert!(stats.summary(next).is_some());
+    }
+
+    #[test]
+    fn expired_and_unknown_frames_do_not_change_cadence() {
+        let mut stats = StatisticsManager::new(1);
+        stats.report_input_acquired(Duration::from_secs(1));
+        stats.report_input_acquired(Duration::from_secs(2));
+        let vsync = stats.prev_vsync;
+        stats.report_submit(Duration::from_secs(1), Duration::from_secs(1));
+        assert_eq!(stats.prev_vsync, vsync);
+        assert!(stats.summary(Duration::from_secs(1)).is_none());
     }
 }

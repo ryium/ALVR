@@ -2,7 +2,7 @@ use super::{GraphicsContext, ck};
 use crate::GL_TEXTURE_EXTERNAL_OES;
 use alvr_common::glam::{IVec2, UVec2};
 use glow::{self as gl, HasContext};
-use std::{ffi::c_void, rc::Rc};
+use std::rc::Rc;
 
 fn create_program(
     gl: &gl::Context,
@@ -117,33 +117,52 @@ impl StagingRenderer {
     }
 
     #[allow(unused_variables)]
-    pub fn render(&self, hardware_buffer: *mut c_void) {
+    pub fn render(&self, frame: Option<&crate::VideoFrame>) {
+        let Some(frame) = frame else {
+            return;
+        };
+
         let gl = &self.context.gl_context;
         self.context.make_current();
 
-        unsafe {
-            self.context.render_ahardwarebuffer_using_texture(
-                hardware_buffer,
-                self.surface_texture,
-                || {
-                    ck!(gl.use_program(Some(self.program)));
+        let render_draw = || {
+            ck!(gl.use_program(Some(self.program)));
 
-                    ck!(gl.viewport(0, 0, self.viewport_size.x, self.viewport_size.y));
-                    ck!(gl.disable(gl::SCISSOR_TEST));
-                    ck!(gl.disable(gl::STENCIL_TEST));
+            ck!(gl.viewport(0, 0, self.viewport_size.x, self.viewport_size.y));
+            ck!(gl.disable(gl::SCISSOR_TEST));
+            ck!(gl.disable(gl::STENCIL_TEST));
 
-                    for (i, framebuffer) in self.framebuffers.iter().enumerate() {
-                        ck!(gl.bind_framebuffer(gl::DRAW_FRAMEBUFFER, Some(*framebuffer)));
+            for (i, framebuffer) in self.framebuffers.iter().enumerate() {
+                ck!(gl.bind_framebuffer(gl::DRAW_FRAMEBUFFER, Some(*framebuffer)));
 
-                        ck!(gl.active_texture(gl::TEXTURE0));
-                        ck!(gl.bind_texture(GL_TEXTURE_EXTERNAL_OES, Some(self.surface_texture)));
-                        ck!(gl.bind_sampler(0, None));
-                        ck!(gl.uniform_1_i32(Some(&self.view_idx_uloc), i as i32));
-                        ck!(gl.draw_arrays(gl::TRIANGLE_STRIP, 0, 4));
-                    }
-                },
-            )
+                ck!(gl.active_texture(gl::TEXTURE0));
+                ck!(gl.bind_texture(GL_TEXTURE_EXTERNAL_OES, Some(self.surface_texture)));
+                ck!(gl.bind_sampler(0, None));
+                ck!(gl.uniform_1_i32(Some(&self.view_idx_uloc), i as i32));
+                ck!(gl.draw_arrays(gl::TRIANGLE_STRIP, 0, 4));
+            }
         };
+
+        match frame {
+            #[cfg(target_os = "android")]
+            crate::VideoFrame::HardwareBuffer(buffer) => unsafe {
+                self.context.render_ahardwarebuffer_using_texture(
+                    *buffer,
+                    self.surface_texture,
+                    render_draw,
+                );
+            },
+            #[cfg(target_os = "linux")]
+            crate::VideoFrame::DmaBuf(dma_buf) => unsafe {
+                if let Err(e) = self.context.render_dmabuf_using_texture(
+                    dma_buf,
+                    self.surface_texture,
+                    render_draw,
+                ) { alvr_common::error!("DMA-BUF rendering failed: {e}"); }
+            },
+            #[allow(unreachable_patterns)]
+            _ => {}
+        }
     }
 }
 
@@ -151,6 +170,8 @@ impl Drop for StagingRenderer {
     fn drop(&mut self) {
         let gl = &self.context.gl_context;
         self.context.make_current();
+        #[cfg(target_os = "linux")]
+        self.context.clear_dma_buf_cache();
 
         unsafe {
             ck!(gl.delete_program(self.program));

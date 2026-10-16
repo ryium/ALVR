@@ -29,7 +29,6 @@ fn get_filesystem_layout() -> afs::Layout {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    use alvr_common::ALVR_VERSION;
     use alvr_common::info;
     use alvr_filesystem as afs;
     use eframe::{
@@ -85,11 +84,12 @@ fn main() {
     }
 
     eframe::run_native(
-        &format!("ALVR Dashboard (streamer v{})", *ALVR_VERSION),
+        "FrameConnect",
         NativeOptions {
             viewport: ViewportBuilder::default()
-                .with_app_id("alvr.dashboard")
-                .with_inner_size((900.0, 600.0))
+                .with_app_id("frameconnect.dashboard")
+                .with_inner_size((1100.0, 740.0))
+                .with_min_inner_size((900.0, 620.0))
                 .with_icon(IconData {
                     rgba: image.rgba_data().to_owned(),
                     width: image.width(),

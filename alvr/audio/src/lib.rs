@@ -1,7 +1,7 @@
 #[cfg(windows)]
 mod windows;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-virtual-devices"))]
 pub mod linux;
 
 #[cfg(windows)]

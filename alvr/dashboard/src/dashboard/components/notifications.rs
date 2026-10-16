@@ -103,7 +103,7 @@ impl NotificationBar {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut Ui) {
+    pub fn ui(&mut self, ui: &mut Ui, show_details: bool) {
         let now = Instant::now();
         if now > self.receive_instant + TIMEOUT {
             self.message = self
@@ -111,6 +111,10 @@ impl NotificationBar {
                 .clone()
                 .unwrap_or_else(|| NO_NOTIFICATIONS_MESSAGE.into());
             self.current_level = LogSeverity::Debug;
+        }
+
+        if !show_details && self.current_level < LogSeverity::Info {
+            return;
         }
 
         let (fg, bg) = match self.current_level {
@@ -141,10 +145,10 @@ impl NotificationBar {
         bottom_bar.show(ui, |ui| {
             ui.with_layout(Layout::right_to_left(alignment), |ui| {
                 if !self.expanded {
-                    if ui.small_button("Expand").clicked() {
+                    if ui.small_button("詳細").clicked() {
                         self.expanded = true;
                     }
-                } else if ui.button("Reduce").clicked() {
+                } else if ui.button("閉じる").clicked() {
                     self.expanded = false;
                 }
                 ui.with_layout(Layout::left_to_right(alignment), |ui| {

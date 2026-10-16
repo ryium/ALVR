@@ -747,9 +747,12 @@ For eye-tracked foveation, enable Headset > Face tracking > Sink > Eye-tracked f
     pub emulated_headset_view_resolution: FrameSize,
 
     #[schema(strings(display_name = "Preferred FPS"))]
-    #[schema(gui(slider(min = 60.0, max = 120.0)), suffix = "Hz")]
+    #[schema(gui(slider(min = 60.0, max = 144.0)), suffix = "Hz")]
     #[schema(flag = "steamvr-restart")]
     pub preferred_fps: f32,
+
+    #[schema(strings(display_name = "FrameConnect: quality-first automatic refresh rate"))]
+    pub frameconnect_auto_refresh_rate: bool,
 
     #[cfg_attr(not(target_os = "windows"), schema(flag = "hidden"))]
     #[schema(strings(
@@ -916,9 +919,7 @@ pub enum FaceTrackingSocialPresenceSinkConfig {
 
 #[derive(SettingsSchema, Serialize, Deserialize, Clone)]
 pub struct FaceTrackingSinkConfig {
-    #[schema(strings(
-        help = "Forward eye and face tracking to another application"
-    ))]
+    #[schema(strings(help = "Forward eye and face tracking to another application"))]
     pub social_presence: Switch<FaceTrackingSocialPresenceSinkConfig>,
     #[schema(strings(
         display_name = "Eye-tracked foveated encoding",
@@ -1025,6 +1026,8 @@ pub enum ControllersEmulationMode {
     PSVR2Sense,
     #[schema(strings(display_name = "Valve Index"))]
     ValveIndex,
+    #[schema(strings(display_name = "Steam Frame"))]
+    SteamFrame,
     #[schema(strings(display_name = "Vive Wand"))]
     ViveWand,
     #[schema(strings(display_name = "Vive Tracker"))]
@@ -1647,10 +1650,10 @@ pub fn session_settings_default() -> SettingsDefault {
         variant: FrameSizeDefaultVariant::Absolute,
         Scale: 1.0,
         Absolute: FrameSizeAbsoluteDefault {
-            width: 2144,
+            width: 2176,
             height: OptionalDefault {
-                set: false,
-                content: 1072,
+                set: true,
+                content: 2176,
             },
         },
     };
@@ -1734,14 +1737,15 @@ pub fn session_settings_default() -> SettingsDefault {
             adapter_index: 0,
             transcoding_view_resolution: view_resolution.clone(),
             emulated_headset_view_resolution: view_resolution,
-            preferred_fps: 72.,
+            preferred_fps: 144.,
+            frameconnect_auto_refresh_rate: true,
             max_buffering_frames: 2.0,
             buffering_history_weight: 0.90,
             enforce_server_frame_pacing: true,
             bitrate: BitrateConfigDefault {
                 gui_collapsed: false,
                 mode: BitrateModeDefault {
-                    ConstantMbps: 30,
+                    ConstantMbps: 60,
                     Adaptive: BitrateModeAdaptiveDefault {
                         gui_collapsed: true,
                         saturation_multiplier: 0.95,
@@ -1785,7 +1789,7 @@ pub fn session_settings_default() -> SettingsDefault {
                 image_corruption_fix: false,
             },
             preferred_codec: CodecTypeDefault {
-                variant: CodecTypeDefaultVariant::H264,
+                variant: CodecTypeDefaultVariant::AV1,
             },
             encoder_config: EncoderConfigDefault {
                 gui_collapsed: true,
@@ -1890,7 +1894,7 @@ pub fn session_settings_default() -> SettingsDefault {
                 }
             },
             foveated_encoding: SwitchDefault {
-                enabled: true,
+                enabled: false,
                 content: FoveatedEncodingConfigDefault {
                     gui_collapsed: true,
                     force_enable: false,
@@ -2300,7 +2304,7 @@ pub fn session_settings_default() -> SettingsDefault {
                 linux_async_reprojection: false,
             },
             velocities_multiplier: 1.0,
-            open_setup_wizard: alvr_common::is_stable() || alvr_common::is_nightly(),
+            open_setup_wizard: false,
             new_version_popup: SwitchDefault {
                 enabled: alvr_common::is_stable(),
                 content: NewVersionPopupConfigDefault {

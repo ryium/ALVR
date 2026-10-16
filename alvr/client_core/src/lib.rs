@@ -21,7 +21,6 @@ use alvr_common::{
     ConnectionState, LifecycleState, ViewParams, dbg_client_core, error,
     glam::{UVec2, Vec2},
     parking_lot::{Mutex, RwLock},
-    warn,
 };
 use alvr_packets::{
     BatteryInfo, ButtonEntry, ClientControlPacket, ClientStreamConfig, RealTimeConfig, TrackingData,
@@ -60,6 +59,7 @@ pub enum ClientCoreEvent {
 // Note: this struct may change without breaking network protocol changes
 #[derive(Clone)]
 pub struct ClientCapabilities {
+    pub frameconnect: Option<alvr_common::frameconnect::FrameConnectCapabilities>,
     pub platform: Platform,
     pub default_view_resolution: UVec2,
     pub max_view_resolution: UVec2,
@@ -81,6 +81,7 @@ pub struct VideoFrameMetadata {
 }
 
 pub struct ClientCoreContext {
+    capabilities: Arc<RwLock<ClientCapabilities>>,
     platform: Platform,
     lifecycle_state: Arc<RwLock<LifecycleState>>,
     event_queue: Arc<Mutex<VecDeque<ClientCoreEvent>>>,
@@ -102,18 +103,18 @@ impl ClientCoreContext {
 
         #[cfg(target_os = "android")]
         {
-            let mut permissions = additional_permissions;
-            permissions.push(alvr_system_info::MICROPHONE_PERMISSION);
-            alvr_system_info::try_get_permissions(&permissions);
+            alvr_system_info::try_get_permissions(&additional_permissions);
             alvr_system_info::set_wifi_lock(true);
         }
 
         let platform = capabilities.platform;
+        let capabilities = Arc::new(RwLock::new(capabilities));
 
         let lifecycle_state = Arc::new(RwLock::new(LifecycleState::Idle));
         let event_queue = Arc::new(Mutex::new(VecDeque::new()));
         let connection_context = Arc::new(ConnectionContext::default());
         let connection_thread = thread::spawn({
+            let capabilities = Arc::clone(&capabilities);
             let lifecycle_state = Arc::clone(&lifecycle_state);
             let connection_context = Arc::clone(&connection_context);
             let event_queue = Arc::clone(&event_queue);
@@ -128,6 +129,7 @@ impl ClientCoreContext {
         });
 
         Self {
+            capabilities,
             platform,
             lifecycle_state,
             event_queue,
@@ -140,6 +142,13 @@ impl ClientCoreContext {
         dbg_client_core!("resume");
 
         *self.lifecycle_state.write() = LifecycleState::Resumed;
+    }
+
+    /// Call before connecting if OpenXR refresh-rate enumeration is unavailable.
+    pub fn set_observed_refresh_rate(&self, rate: f32) {
+        if rate.is_finite() && rate > 0.0 {
+            self.capabilities.write().refresh_rates = vec![rate];
+        }
     }
 
     pub fn pause(&self) {
@@ -311,8 +320,6 @@ impl ClientCoreContext {
             if let Some(sender) = &mut *self.connection_context.statistics_sender.lock() {
                 if let Some(stats) = stats.summary(timestamp) {
                     sender.send_header(&stats).ok();
-                } else {
-                    warn!("Statistics summary not ready!");
                 }
             }
         }

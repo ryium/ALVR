@@ -4,7 +4,7 @@ use alvr_common::{
     glam::{Mat4, UVec2, Vec2, Vec3, Vec4},
 };
 use alvr_session::{PassthroughMode, UpscalingConfig};
-use std::{cell::Cell, ffi::c_void, iter, mem, rc::Rc};
+use std::{cell::Cell, iter, mem, rc::Rc};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBindingType,
@@ -50,13 +50,13 @@ struct ViewObjects {
 }
 
 pub struct StreamRenderer {
-    context: Rc<GraphicsContext>,
     staging_renderer: StagingRenderer,
     pipeline: RenderPipeline,
     views_objects: [ViewObjects; 2],
     foveated_encoding: Option<AlvrFoveatedEncodingParams>,
     foveation_buffer: Buffer,
     last_foveation_center_shifts: Cell<Option<[Vec2; 2]>>,
+    context: Rc<GraphicsContext>,
 }
 
 impl StreamRenderer {
@@ -287,18 +287,16 @@ impl StreamRenderer {
 
     /// Runtime foveation centers must already be encoder-aligned. `None` uses the negotiated centers.
     ///
-    /// # Safety
-    /// `hardware_buffer` must be a valid pointer to a ANativeWindowBuffer.
     pub fn render(
         &self,
-        hardware_buffer: *mut c_void,
+        video_frame: Option<&crate::VideoFrame>,
         view_params: [StreamViewParams; 2],
         passthrough: Option<&PassthroughMode>,
         foveation_center_shifts: Option<[Vec2; 2]>,
     ) {
-        // if hardware_buffer is available copy stream to staging texture
-        if !hardware_buffer.is_null() {
-            self.staging_renderer.render(hardware_buffer);
+        // if video_frame is available copy stream to staging texture
+        if let Some(frame) = video_frame {
+            self.staging_renderer.render(Some(frame));
         }
 
         if let Some(config) = &self.foveated_encoding

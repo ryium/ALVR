@@ -365,6 +365,7 @@ void VideoEncoderNVENC::FillEncodeConfig(
     // dropped if don't use reference frame invalidation.
     encodeConfig.gopLength = gopLength;
     encodeConfig.frameIntervalP = 1;
+    encodeConfig.rcParams.enableLookahead = 0;
 
     if (Settings_Instance()->m_nvencPFrameStrategy != -1) {
         encodeConfig.frameIntervalP = Settings_Instance()->m_nvencPFrameStrategy;

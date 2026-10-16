@@ -44,3 +44,6 @@ tower-http = { version = "0.6", features = ["cors", "set-header"] }
 serde = "1"
 serde_json = "1"
 sysinfo = { version = "0.38", default-features = false, features = ["system"] }
+ 
+[target.'cfg(target_os = "linux")'.dependencies]
+alvr_audio = { workspace = true, features = ["linux-virtual-devices"] }

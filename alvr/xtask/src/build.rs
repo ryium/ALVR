@@ -115,7 +115,7 @@ pub fn build_streamer(
         None
     };
 
-    sh.remove_path(afs::streamer_build_dir()).ok();
+    // Keep local diagnostics and configuration when rebuilding a development package.
     sh.create_dir(build_layout.openvr_driver_lib_dir()).unwrap();
     sh.create_dir(&build_layout.executables_dir).unwrap();
 
